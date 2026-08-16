@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bill Moshi
 
-## Getting Started
+Bill Moshi is a mobile-first expense-sharing PWA built from the product specification in Notion. Its organizing hierarchy is **Group → Event → Expense**: a group is a long-lived family, roommate, friend, or team space, while an event is one specific trip or activity inside that group. Group owners approve invitation requests, and approved members are inherited by the group’s events. It supports multi-currency expenses, equal/exact/percentage/share splits, balances, partial settlements, receipts, and an IndexedDB offline queue.
 
-First, run the development server:
+## Run locally
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env.local
 pnpm dev
-# or
-bun dev
+npm run dev -- --hostname 0.0.0.0 --port 3000
+```
+open the web in iphone in "http://10.0.0.100:3000"
+
+The app works immediately with sample data. To connect Google-owned storage, create Google OAuth web credentials, enable the Google Drive and Google Sheets APIs, fill in `.env.local`, and add `http://localhost:3000/api/auth/callback/google` as a redirect URI.
+
+## Checks
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Storage design
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- IndexedDB stores the local snapshot, queued idempotent operations, and pending receipt blobs.
+- Google OAuth requests profile, `drive.file`, and Sheets scopes only.
+- A server-only adapter creates isolated Personal and per-Group workspaces, then routes every queued operation to the correct `Data` Sheet.
+- `Bill Moshi/Personal` is enforced as owner-only and contains its own `Data` Sheet plus `Uploads` folder.
+- Every Group has an individual folder containing its own `Data` Sheet plus `Uploads` folder. The folder starts private and is shared only with approved members (`writer`) or viewers (`reader`).
+- The `Bill Moshi` root is never shared. Personal receipts remain private; Group receipts inherit that Group folder's approved membership.
+- Newly created scoped Sheets are seeded from the offline snapshot. The former shared workbook is retained as `Legacy - Bill Moshi Data`, and historical receipt files are moved into their matching Uploads folders when accessible.
+- Invitation tokens are hashed before workbook persistence. Pending invitees never receive event financial data from the join screen.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The current collaboration implementation is an MVP: local/demo mode is single-device, while production multi-user invitations require a shared server-side authorization layer so ownership checks cannot be bypassed by a modified client.
