@@ -10,7 +10,7 @@ cp .env.example .env.local
 pnpm dev
 npm run dev -- --hostname 0.0.0.0 --port 3000
 ```
-open the web in iphone in "http://10.0.0.100:3000"
+open the web  "http://10.0.0.100:3000" by your phone
 
 The app works immediately with sample data. To connect Google-owned storage, create Google OAuth web credentials, enable the Google Drive and Google Sheets APIs, fill in `.env.local`, and add `http://localhost:3000/api/auth/callback/google` as a redirect URI.
 
