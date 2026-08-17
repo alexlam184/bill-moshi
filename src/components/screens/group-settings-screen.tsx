@@ -7,6 +7,7 @@ import { useState, type FormEvent } from "react";
 import { useBillMoshi } from "@/components/providers/app-provider";
 import { Button, Card, Field, PageTitle, fieldClass } from "@/components/ui/primitives";
 import { SUPPORTED_CURRENCIES, type CurrencyCode } from "@/lib/domain/types";
+import { useUnsavedChanges } from "@/lib/hooks/use-unsaved-changes";
 
 export function GroupSettingsScreen({ groupId }: { groupId: string }) {
   const { snapshot, hydrated } = useBillMoshi();
@@ -17,7 +18,7 @@ export function GroupSettingsScreen({ groupId }: { groupId: string }) {
 
   const isOwner = group.ownerId === snapshot.currentUser.id;
 
-  return <div className="grid gap-6 animate-rise">
+  return <div className="grid gap-6">
     <Link href={`/groups/${groupId}`} className="flex w-fit items-center gap-2 text-sm font-bold text-muted"><ArrowLeft size={17} /> {group.name}</Link>
     <PageTitle eyebrow="Group settings" title="Group currency" subtitle="Daily Group records use this currency for balances and exchange-rate comparisons." />
     {!isOwner ? <Card className="p-6 text-sm leading-6 text-muted">Only the Group owner can change this setting.</Card> : <GroupCurrencyForm key={`${group.id}:${group.currency}`} groupId={group.id} initialCurrency={group.currency} />}
@@ -28,6 +29,7 @@ function GroupCurrencyForm({ groupId, initialCurrency }: { groupId: string; init
   const router = useRouter();
   const { updateGroupCurrency } = useBillMoshi();
   const [currency, setCurrency] = useState<CurrencyCode>(initialCurrency);
+  useUnsavedChanges(currency !== initialCurrency);
 
   function save(event: FormEvent) {
     event.preventDefault();

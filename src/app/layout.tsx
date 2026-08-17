@@ -1,11 +1,24 @@
 import type { Metadata, Viewport } from "next";
-import { Geist } from "next/font/google";
+import { Bricolage_Grotesque, Geist } from "next/font/google";
+import Script from "next/script";
 import { AppShell } from "@/components/layout/app-shell";
 import { Providers } from "@/components/providers/providers";
 import { ServiceWorkerRegister } from "@/components/providers/service-worker-register";
 import "./globals.css";
 
-const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
+const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"], display: "swap" });
+const bricolage = Bricolage_Grotesque({ variable: "--font-bricolage", subsets: ["latin"], display: "swap" });
+
+const injectedWalletErrorGuard = `
+  window.addEventListener("error", function (event) {
+    var message = String(event.message || (event.error && event.error.message) || "");
+
+    if (message.indexOf("window.ethereum.selectedAddress = undefined") !== -1) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+`;
 
 export const metadata: Metadata = {
   title: { default: "Bill Moshi", template: "%s · Bill Moshi" },
@@ -24,8 +37,15 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geist.variable} antialiased`}>
-      <body>
+    <html lang="en" className={`${geist.variable} ${bricolage.variable} antialiased`}>
+      <head>
+        {process.env.NODE_ENV === "development" ? (
+          <Script id="ignore-injected-wallet-error" strategy="beforeInteractive">
+            {injectedWalletErrorGuard}
+          </Script>
+        ) : null}
+      </head>
+      <body suppressHydrationWarning>
         <Providers>
           <ServiceWorkerRegister />
           <AppShell>{children}</AppShell>

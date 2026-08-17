@@ -1,29 +1,33 @@
 "use client";
 
-import { CalendarDays, ChevronRight, Cloud, CloudOff, Coins, Database, FolderCog, LockKeyhole, LogIn, LogOut, RefreshCw, RotateCcw, Tags, UsersRound } from "lucide-react";
+import { CalendarDays, ChevronRight, Cloud, CloudOff, Coins, Database, FolderCog, LockKeyhole, LogIn, LogOut, RefreshCw, RotateCcw, Tags, UsersRound, X } from "lucide-react";
 import { signIn, signOut } from "next-auth/react";
 import Link from "next/link";
+import { useState } from "react";
 import { useBillMoshi } from "@/components/providers/app-provider";
 import { Avatar, Button, Card, PageTitle } from "@/components/ui/primitives";
 import { SUPPORTED_CURRENCIES, type CurrencyCode } from "@/lib/domain/types";
+import { useDialogFocus } from "@/lib/hooks/use-dialog-focus";
 
 export function ProfileScreen() {
   const { snapshot, googleConnected, pendingCount, syncing, syncMessage, updateDefaultCurrency, syncNow, resetDemo } = useBillMoshi();
+  const [resetOpen, setResetOpen] = useState(false);
+  const resetDialogRef = useDialogFocus<HTMLElement>(() => setResetOpen(false), resetOpen);
   return (
-    <div className="grid gap-6 animate-rise">
+    <div className="grid gap-6">
       <PageTitle eyebrow="Account & app" title="Settings" subtitle="Manage your profile, Google storage, categories, and sync." />
       <Card className="flex items-center gap-4 p-5">
         <Avatar name={snapshot.currentUser.name} color="#2F80ED" size="lg" />
         <div className="min-w-0 flex-1"><p className="truncate font-extrabold">{snapshot.currentUser.name}</p><p className="truncate text-sm text-muted">{snapshot.currentUser.email}</p></div>
-        {googleConnected ? <Button type="button" variant="ghost" className="px-3" onClick={() => void signOut({ redirectTo: "/login" })}><LogOut size={17} /></Button> : <Link href="/login" className="grid size-10 place-items-center rounded-xl bg-brand-soft text-brand-dark" aria-label="Sign in"><LogIn size={18} /></Link>}
+        {googleConnected ? <Button type="button" variant="ghost" className="px-3" aria-label="Sign out" onClick={() => void signOut({ redirectTo: "/login" })}><LogOut size={17} /></Button> : <Link href="/login" className="grid size-10 place-items-center rounded-xl bg-brand-soft text-brand-dark" aria-label="Sign in"><LogIn size={18} /></Link>}
       </Card>
       <Card className="p-5">
         <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand-dark"><Coins size={21} /></span><div className="min-w-0 flex-1"><h2 className="font-extrabold">Default currency</h2><p className="mt-0.5 text-xs leading-5 text-muted">Personal records are converted to this currency. Groups and Events can use their own currency.</p></div></div>
-        <label className="mt-4 grid gap-2 text-sm font-semibold"><span>Personal default</span><select aria-label="Default currency" value={snapshot.currentUser.defaultCurrency} onChange={(event) => updateDefaultCurrency(event.target.value as CurrencyCode)} className="min-h-12 w-full rounded-xl border border-line bg-white px-3.5 text-base font-bold outline-none focus:border-brand focus:ring-4 focus:ring-brand-soft">{SUPPORTED_CURRENCIES.map((code) => <option key={code} value={code}>{currencyName(code)}</option>)}</select></label>
+        <label className="mt-4 grid gap-2 text-sm font-semibold"><span>Personal default</span><select aria-label="Default currency" name="default-currency" autoComplete="off" value={snapshot.currentUser.defaultCurrency} onChange={(event) => updateDefaultCurrency(event.target.value as CurrencyCode)} className="min-h-12 w-full rounded-xl border border-line bg-white px-3.5 text-base font-bold outline-none focus:border-brand focus:ring-4 focus:ring-brand-soft">{SUPPORTED_CURRENCIES.map((code) => <option key={code} value={code}>{currencyName(code)}</option>)}</select></label>
       </Card>
       <Card className="overflow-hidden">
         <div className="flex items-center gap-3 border-b border-line p-5"><span className={`grid size-11 place-items-center rounded-xl ${googleConnected ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{googleConnected ? <Cloud size={21} /> : <CloudOff size={21} />}</span><div className="min-w-0 flex-1"><h2 className="font-extrabold">Google Drive & Sheets</h2><p className="mt-0.5 text-xs text-muted">{googleConnected ? "Connected to your Google account" : "Local demo storage only"}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-extrabold ${googleConnected ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{googleConnected ? "Connected" : "Not connected"}</span></div>
-        <div className="grid gap-3 p-5"><div className="flex items-center gap-3 rounded-xl bg-slate-50 p-3"><Database size={18} className="text-brand-dark" /><div className="min-w-0 flex-1"><p className="text-sm font-bold">Sync status</p><p className="truncate text-xs text-muted">{syncMessage}</p></div>{pendingCount > 0 && <span className="text-xs font-extrabold text-warning">{pendingCount} pending</span>}</div>{googleConnected ? <Button type="button" onClick={() => void syncNow()} disabled={syncing}><RefreshCw className={syncing ? "animate-spin" : ""} size={17} />{syncing ? "Syncing…" : "Sync now"}</Button> : <Button type="button" onClick={() => void signIn("google", { redirectTo: "/settings" })}><LogIn size={17} /> Connect Google</Button>}</div>
+        <div className="grid gap-3 p-5"><div aria-live="polite" className="flex items-center gap-3 rounded-xl bg-slate-50 p-3"><Database size={18} className="text-brand-dark" /><div className="min-w-0 flex-1"><p className="text-sm font-bold">Sync Status</p><p className="truncate text-xs text-muted">{syncMessage}</p></div>{pendingCount > 0 && <span className="text-xs font-extrabold text-warning">{pendingCount} pending</span>}</div>{googleConnected ? <Button type="button" onClick={() => void syncNow()} disabled={syncing}><RefreshCw className={syncing ? "animate-spin" : ""} size={17} />{syncing ? "Syncing…" : "Sync Now"}</Button> : <Button type="button" onClick={() => void signIn("google", { redirectTo: "/settings" })}><LogIn size={17} /> Connect Google</Button>}</div>
       </Card>
       <Card className="p-5">
         <h2 className="font-extrabold">Google Drive layout</h2>
@@ -38,8 +42,9 @@ export function ProfileScreen() {
         <SettingsLink href="/" icon={<FolderCog size={19} />} title="Groups" subtitle="Spaces, members, approvals, and invitations" />
         <SettingsLink href="/events" icon={<CalendarDays size={19} />} title="Events" subtitle="Activities, currencies, and participants" />
       </Card>
-      <Card className="p-5"><h2 className="font-extrabold">Demo tools</h2><p className="mt-1 text-sm leading-6 text-muted">Restore the sample Toronto trip and clear locally queued changes.</p><Button type="button" variant="secondary" className="mt-4" onClick={() => void resetDemo()}><RotateCcw size={17} /> Reset demo data</Button></Card>
+      <Card className="p-5"><h2 className="font-extrabold">Demo Tools</h2><p className="mt-1 text-sm leading-6 text-muted">Restore the sample Toronto trip and clear locally queued changes.</p><Button type="button" variant="secondary" className="mt-4" onClick={() => setResetOpen(true)}><RotateCcw size={17} /> Reset Demo Data</Button></Card>
       <p className="text-center text-xs leading-5 text-muted">Bill Moshi requests only basic profile, Drive file, and Sheets permissions needed by the app.</p>
+      {resetOpen && <div className="animate-overlay-fade fixed inset-0 z-[80] grid items-end overscroll-contain bg-slate-950/45 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="reset-demo-title"><button type="button" className="absolute inset-0" aria-label="Cancel reset" onClick={() => setResetOpen(false)} /><section ref={resetDialogRef} className="animate-sheet-in safe-bottom relative w-full max-w-md rounded-t-[1.75rem] bg-white p-5 shadow-2xl sm:rounded-[1.75rem] sm:p-6"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-extrabold uppercase tracking-[0.13em] text-danger">Replace Local Data</p><h2 id="reset-demo-title" className="mt-1 text-xl font-extrabold tracking-tight">Reset Demo Data?</h2></div><button type="button" onClick={() => setResetOpen(false)} className="grid size-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-muted hover:bg-slate-100 hover:text-ink" aria-label="Close"><X size={20} /></button></div><p className="mt-5 rounded-xl bg-danger-soft p-4 text-sm leading-6 text-ink">This restores the sample Toronto trip and clears locally queued changes. This cannot be undone.</p><div className="mt-6 grid grid-cols-2 gap-3"><Button type="button" variant="secondary" onClick={() => setResetOpen(false)}>Cancel</Button><Button type="button" variant="danger" onClick={() => { setResetOpen(false); void resetDemo(); }}><RotateCcw size={16} /> Reset Data</Button></div></section></div>}
     </div>
   );
 }
