@@ -67,7 +67,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     queueMicrotask(() => selectGroup(routeGroup.id));
   }, [routeGroup, selectGroup, selectedGroupId]);
 
-  if (minimal) return <>{children}</>;
+  if (minimal) return <div key={pathname} className="route-stage min-h-dvh">{children}</div>;
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-[1180px] bg-white lg:grid lg:grid-cols-[250px_1fr] lg:border-x lg:border-line lg:shadow-2xl">
