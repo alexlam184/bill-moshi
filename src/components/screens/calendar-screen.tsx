@@ -3,12 +3,13 @@
 import { ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, TrendingDown, TrendingUp, X } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useBillMoshi } from "@/components/providers/app-provider";
 import { Card, EmptyState } from "@/components/ui/primitives";
 import { buildMonthGrid, calendarDayTotals, calendarMonthTotals, recordsForCalendarScope, transactionDateKey } from "@/lib/domain/calendar";
 import { formatMoney } from "@/lib/domain/calculations";
 import { SUPPORTED_CURRENCIES, type CurrencyCode, type Expense } from "@/lib/domain/types";
+import { useQueryState } from "@/lib/hooks/use-query-state";
 
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -21,15 +22,20 @@ export function CalendarScreen({ groupId }: { groupId?: string }) {
   const { snapshot, hydrated, selectedGroupId, personalContext, selectGroup } = useBillMoshi();
   const group = groupId ? snapshot.groups.find((item) => item.id === groupId) : undefined;
   const today = new Date();
-  const [month, setMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
-  const [selectedDate, setSelectedDate] = useState(localTodayKey);
-  const [currency, setCurrency] = useState<CurrencyCode>("CAD");
+  const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const [monthKey, setMonthKey] = useQueryState<string>("month", currentMonthKey);
+  const [selectedDateQuery, setSelectedDate] = useQueryState<string>("date", localTodayKey());
+  const [currency, setCurrency] = useQueryState<CurrencyCode>("currency", "CAD", SUPPORTED_CURRENCIES);
+  const validMonthKey = /^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey) ? monthKey : currentMonthKey;
+  const [monthYear, monthNumber] = validMonthKey.split("-").map(Number);
+  const month = new Date(monthYear, monthNumber - 1, 1);
+  const selectedDate = /^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(selectedDateQuery) ? selectedDateQuery : localTodayKey();
 
   useEffect(() => {
     if (!groupId && (selectedGroupId || personalContext)) selectGroup(undefined);
   }, [groupId, personalContext, selectGroup, selectedGroupId]);
 
-  if (groupId && !group && !hydrated) return <div className="min-h-dvh animate-pulse bg-slate-50" />;
+  if (!hydrated) return <div className="min-h-dvh animate-pulse bg-slate-50" />;
   if (groupId && !group) notFound();
 
   const records = recordsForCalendarScope(snapshot.expenses, groupId);
@@ -51,28 +57,28 @@ export function CalendarScreen({ groupId }: { groupId?: string }) {
       .filter((record) => record.currencyOriginal === currency && transactionDateKey(record.transactionDate).startsWith(prefix))
       .map((record) => transactionDateKey(record.transactionDate))
       .sort()[0];
-    setMonth(next);
+    setMonthKey(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`);
     setSelectedDate(firstRecordDate ?? `${prefix}01`);
   }
 
   function selectDay(date: string) {
     const selected = new Date(`${date}T12:00:00`);
     if (selected.getMonth() !== month.getMonth() || selected.getFullYear() !== month.getFullYear()) {
-      setMonth(new Date(selected.getFullYear(), selected.getMonth(), 1));
+      setMonthKey(`${selected.getFullYear()}-${String(selected.getMonth() + 1).padStart(2, "0")}`);
     }
     setSelectedDate(date);
   }
 
   return (
-    <div className="min-h-dvh bg-white animate-rise md:min-h-0 md:overflow-hidden md:rounded-[1.5rem] md:border md:border-line md:card-shadow">
-      <header className="grid min-h-18 grid-cols-[40px_minmax(0,1fr)_76px] items-center gap-1 border-b border-line px-2 sm:min-h-20 sm:grid-cols-[48px_1fr_100px] sm:gap-2 sm:px-5">
+    <div className="min-h-dvh bg-white md:min-h-0 md:overflow-hidden md:rounded-[1.5rem] md:border md:border-line md:card-shadow">
+      <header className="safe-top-header grid grid-cols-[40px_minmax(0,1fr)_76px] items-center gap-1 border-b border-line px-2 sm:min-h-20 sm:grid-cols-[48px_1fr_100px] sm:gap-2 sm:px-5">
         <Link href={closeHref} aria-label="Close calendar" className="grid size-10 place-items-center rounded-xl text-muted transition hover:bg-slate-100 hover:text-ink sm:size-11"><X size={22} /></Link>
         <div className="flex min-w-0 items-center justify-center gap-0 sm:gap-3">
           <button type="button" onClick={() => moveMonth(-1)} aria-label="Previous month" className="grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink sm:size-9"><ChevronLeft size={20} /></button>
           <h1 className="min-w-0 whitespace-nowrap text-center text-base font-extrabold tracking-tight text-ink sm:min-w-32 sm:text-2xl">{monthLabel}</h1>
           <button type="button" onClick={() => moveMonth(1)} aria-label="Next month" className="grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink sm:size-9"><ChevronRight size={20} /></button>
         </div>
-        <select aria-label="Calendar currency" value={currency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="min-h-10 w-full rounded-xl border border-line bg-slate-50 px-1.5 text-xs font-extrabold text-ink outline-none focus:border-brand focus:ring-4 focus:ring-brand-soft sm:px-2 sm:text-sm">
+        <select aria-label="Calendar currency" name="calendar-currency" autoComplete="off" value={currency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="min-h-10 w-full rounded-xl border border-line bg-slate-50 px-1.5 text-xs font-extrabold text-ink outline-none focus:border-brand focus:ring-4 focus:ring-brand-soft sm:px-2 sm:text-sm">
           {SUPPORTED_CURRENCIES.map((code) => <option key={code}>{code}</option>)}
         </select>
       </header>
@@ -151,7 +157,7 @@ function CalendarRecordRow({ record, snapshot }: { record: Expense; snapshot: Re
   const context = !record.groupId ? "Myself · Personal" : event ? `${group?.name ?? "Group"} · ${event.name}` : `${group?.name ?? "Group"} · Daily`;
   const tone = record.recordType === "expense" ? "text-danger" : record.recordType === "income" ? "text-success" : "text-brand-dark";
   const iconTone = record.recordType === "expense" ? "bg-danger-soft" : record.recordType === "income" ? "bg-success-soft" : "bg-brand-soft";
-  return <Link href={`/expenses/${record.id}`} className="flex min-h-16 items-center gap-3 px-4 py-3 transition hover:bg-slate-50"><span className={`grid size-10 shrink-0 place-items-center rounded-xl text-lg ${iconTone}`}>{category?.emoji ?? (record.recordType === "transfer" ? "↔️" : "🧾")}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-extrabold">{record.description}</p><p className="mt-0.5 truncate text-xs text-muted">{context}</p></div><div className="shrink-0 text-right"><p className={`text-sm font-extrabold ${tone}`}>{record.recordType === "income" ? "+" : record.recordType === "expense" ? "−" : ""}{formatMoney(record.amountOriginal, record.currencyOriginal)}</p><p className="mt-0.5 text-[0.62rem] font-bold capitalize text-muted">{record.recordType}</p></div><ChevronRight size={16} className="shrink-0 text-slate-300" /></Link>;
+  return <Link href={`/expenses/${record.id}`} className="virtual-list-item flex min-h-16 items-center gap-3 px-4 py-3 transition hover:bg-slate-50"><span className={`grid size-10 shrink-0 place-items-center rounded-xl text-lg ${iconTone}`}>{category?.emoji ?? (record.recordType === "transfer" ? "↔️" : "🧾")}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-extrabold">{record.description}</p><p className="mt-0.5 truncate text-xs text-muted">{context}</p></div><div className="shrink-0 text-right"><p className={`text-sm font-extrabold ${tone}`}>{record.recordType === "income" ? "+" : record.recordType === "expense" ? "−" : ""}{formatMoney(record.amountOriginal, record.currencyOriginal)}</p><p className="mt-0.5 text-[0.62rem] font-bold capitalize text-muted">{record.recordType}</p></div><ChevronRight size={16} className="shrink-0 text-slate-300" /></Link>;
 }
 
 function compactAmount(value: number, currency: CurrencyCode) {

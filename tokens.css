@@ -1,0 +1,58 @@
+/* Hallmark · macrostructure: Workbench · genre: playful · tone: soft-exact · pre-emit critique: P4 H4 E5 S5 R5 V4 */
+:root {
+  --color-primary: #6ebbf1;
+  --color-primary-hover: #62afe5;
+  --color-primary-active: #54a1d8;
+  --color-primary-dark: #17699f;
+  --color-primary-ink: #103a55;
+  --color-primary-soft: #eaf6fe;
+  --color-background: #ffffff;
+  --color-surface: #ffffff;
+  --color-app-background: #f4f8fb;
+  --color-modal-background: #eef4f8;
+  --color-text: #17212b;
+  --color-muted: #64748b;
+  --color-placeholder: #94a3b8;
+  --color-border: #e5edf4;
+  --color-border-strong: #cbd9e4;
+  --color-focus: #0b5e91;
+  --color-success: #18794e;
+  --color-success-soft: #e9f8f0;
+  --color-danger: #c43d4b;
+  --color-danger-soft: #fff0f1;
+  --color-warning: #8a5a00;
+  --color-warning-soft: #fff7df;
+  --color-balance-start: #dff2ff;
+  --color-balance-middle: #f2f9fe;
+  --color-chart-track: #f1f5f9;
+  --color-chart-1: #3b94cf;
+  --color-chart-2: #21835a;
+  --color-chart-3: #c94a58;
+  --color-chart-4: #b87000;
+  --color-chart-5: #7444c4;
+  --color-chart-6: #0f8178;
+  --color-chart-7: #52657b;
+  --color-chart-8: #bd347b;
+
+  --font-display: var(--font-bricolage);
+  --font-body: var(--font-geist-sans);
+
+  --radius-control: 0.75rem;
+  --radius-card: 1.35rem;
+  --radius-modal: 1.75rem;
+  --shadow-app: 0 14px 42px rgb(44 90 122 / 11%);
+  --shadow-card: 0 6px 24px rgb(44 90 122 / 7%);
+  --shadow-modal: 0 24px 70px rgb(23 33 43 / 20%);
+
+  --duration-quick: 120ms;
+  --duration-short: 180ms;
+  --duration-medium: 260ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --z-sticky: 30;
+  --z-navigation: 40;
+  --z-drawer: 50;
+  --z-dialog: 70;
+  --z-critical-dialog: 80;
+  --z-fullscreen-dialog: 100;
+}

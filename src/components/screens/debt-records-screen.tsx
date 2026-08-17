@@ -9,6 +9,8 @@ import { Avatar, Card, EmptyState, PageTitle } from "@/components/ui/primitives"
 import { formatMoney } from "@/lib/domain/calculations";
 import { calculateDebtShareAmounts, equalDebtShareValues, MAX_BULK_DEBT_PEOPLE, parseDebtPersonNames, summarizeUnpaidDebtRecords, type DebtCurrencySummary, type DebtShareMethod } from "@/lib/domain/debt-records";
 import { SUPPORTED_CURRENCIES, type CurrencyCode, type DebtDirection, type DebtStatus } from "@/lib/domain/types";
+import { useQueryState } from "@/lib/hooks/use-query-state";
+import { useUnsavedChanges } from "@/lib/hooks/use-unsaved-changes";
 
 type StatusFilter = "all" | DebtStatus;
 
@@ -28,11 +30,13 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
   const [note, setNote] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
-  const [filter, setFilter] = useState<StatusFilter>(view === "records" ? "all" : "unpaid");
+  const [filter, setFilter] = useQueryState<StatusFilter>("status", view === "records" ? "all" : "unpaid", ["all", "unpaid", "paid"]);
   const [error, setError] = useState("");
+  const [formDirty, setFormDirty] = useState(false);
   const [shareMethod, setShareMethod] = useState<DebtShareMethod>("equal");
   const [shareValues, setShareValues] = useState<Record<DebtShareMethod, Record<string, string>>>({ equal: {}, exact: {}, percentage: {}, shares: {} });
   const [excludedSplitKeys, setExcludedSplitKeys] = useState<string[]>([]);
+  useUnsavedChanges(composerMode && formDirty && !saving);
 
   useEffect(() => {
     if (!editingDebtRecord || initializedEdit.current) return;
@@ -123,9 +127,11 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
       setDate(todayInputValue());
       setShareValues({ equal: {}, exact: {}, percentage: {}, shares: {} });
       setExcludedSplitKeys([]);
+      setFormDirty(false);
       router.push("/debts");
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Could not save the debt record.");
+      requestAnimationFrame(() => document.getElementById("debt-form-error")?.focus());
     } finally {
       setSaving(false);
     }
@@ -148,12 +154,14 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
   }
 
   function toggleSplitParticipant(participantKey: string) {
+    setFormDirty(true);
     setExcludedSplitKeys((current) => current.includes(participantKey)
       ? current.filter((key) => key !== participantKey)
       : [...current, participantKey]);
   }
 
   function changeDirection(nextDirection: DebtDirection) {
+    setFormDirty(true);
     setDirection(nextDirection);
     if (editMode) return;
     setExcludedSplitKeys((current) => nextDirection === "borrowed"
@@ -161,23 +169,14 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
       : current.filter((key) => key !== "__current_user__"));
   }
 
-  const canSubmit = personNames.length > 0
-    && (!editMode || personNames.length === 1)
-    && personNames.length <= MAX_BULK_DEBT_PEOPLE
-    && numericAmount > 0
-    && Boolean(recordName.trim())
-    && (editMode || activeOtherParticipants.length > 0)
-    && calculatedShares.length === activeSplitParticipants.length
-    && !shareError;
-
-  if (composerMode && editMode && hydrated && !editingDebtRecord) return <Card className="mx-auto max-w-md p-8 text-center"><h1 className="font-extrabold">Debt record not found</h1><p className="mt-2 text-sm text-muted">It may have been removed from this device.</p><Link href="/debts" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-brand px-5 text-sm font-extrabold text-[#103a55]">Back to debt records</Link></Card>;
+  if (composerMode && editMode && hydrated && !editingDebtRecord) return <Card className="mx-auto max-w-md p-8 text-center"><h1 className="font-extrabold">Debt record not found</h1><p className="mt-2 text-sm text-muted">It may have been removed from this device.</p><Link href="/debts" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-brand px-5 text-sm font-extrabold text-brand-ink">Back to debt records</Link></Card>;
 
   if (composerMode) return (
-    <div className="mx-auto min-h-dvh w-full max-w-[680px] overflow-hidden bg-white animate-rise md:min-h-0 md:rounded-[1.75rem] md:border md:border-line md:shadow-[0_18px_50px_rgba(44,90,122,0.12)]">
-      <header className="sticky top-0 z-20 grid h-[76px] grid-cols-[64px_1fr_80px] items-center bg-white/95 px-4 backdrop-blur">
+    <div className="mx-auto min-h-dvh w-full max-w-[680px] overflow-hidden bg-white md:min-h-0 md:rounded-[1.75rem] md:border md:border-line modal-shadow">
+      <header className="safe-top-record-header sticky top-0 z-20 grid grid-cols-[64px_1fr_80px] items-center bg-white/95 px-4 backdrop-blur">
         <Link href="/debts" aria-label="Close new debt record" className="grid size-12 place-items-center rounded-full border border-line bg-white text-muted shadow-sm transition hover:bg-slate-50 hover:text-ink"><X size={25} strokeWidth={2.4} /></Link>
         <h1 className="text-center text-xl font-extrabold tracking-[-0.03em]">{editMode ? "Edit Debt Record" : "New Debt Record"}</h1>
-        <button form="debt-record-form" type="submit" disabled={!canSubmit || saving} className="min-h-11 rounded-full bg-brand px-4 text-sm font-extrabold text-[#103a55] transition enabled:hover:bg-[#62afe5] disabled:bg-slate-100 disabled:text-slate-400">{saving ? "Saving" : "Done"}</button>
+        <button form="debt-record-form" type="submit" disabled={saving} className="min-h-11 rounded-full bg-brand px-4 text-sm font-extrabold text-brand-ink transition enabled:hover:bg-brand-hover disabled:bg-slate-100 disabled:text-slate-400">{saving ? "Saving…" : "Done"}</button>
       </header>
 
       <div className="grid grid-cols-2 border-b border-line px-5" role="tablist" aria-label="Debt direction">
@@ -185,27 +184,27 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
         <button type="button" role="tab" aria-selected={direction === "borrowed"} onClick={() => changeDirection("borrowed")} className={`relative min-h-14 text-sm transition ${direction === "borrowed" ? "font-extrabold text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-1 after:rounded-t-full after:bg-brand" : "font-bold text-muted"}`}>I owe them</button>
       </div>
 
-      <form id="debt-record-form" className="px-5 pb-12" onSubmit={submit}>
+      <form id="debt-record-form" className="px-5 pb-12" onSubmit={submit} onChange={() => setFormDirty(true)} noValidate>
         <section className="grid grid-cols-[46%_54%] items-center border-b border-line py-8">
           <label className="relative flex w-fit items-center gap-2">
             <span className="sr-only">Currency</span>
-            <select aria-label="Currency" value={currency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="record-currency-display max-w-full appearance-none bg-transparent pr-8 font-extrabold outline-none">{SUPPORTED_CURRENCIES.map((code) => <option key={code}>{code}</option>)}</select>
+            <select aria-label="Currency" name="currency" autoComplete="off" value={currency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="record-currency-display max-w-full appearance-none bg-transparent pr-8 font-extrabold outline-none">{SUPPORTED_CURRENCIES.map((code) => <option key={code}>{code}</option>)}</select>
             <ChevronDown className="pointer-events-none absolute right-0 text-muted" size={20} />
           </label>
-          <input aria-label="Total debt amount" inputMode="decimal" className="record-amount-display min-w-0 bg-transparent text-right font-extrabold outline-none placeholder:text-slate-300" placeholder="0" value={amount} onChange={(event) => setAmount(event.target.value)} />
+          <input aria-label="Total debt amount" name="amount" autoComplete="off" type="number" min="0" step={currency === "JPY" ? "1" : "0.01"} inputMode="decimal" className="record-amount-display min-w-0 bg-transparent text-right font-extrabold outline-none placeholder:text-slate-300" placeholder="0" value={amount} onChange={(event) => setAmount(event.target.value)} />
         </section>
 
-        <DebtRecordRow label="Date"><input aria-label="Debt date" type="date" value={date} onChange={(event) => setDate(event.target.value)} className="w-full bg-transparent text-right text-sm font-bold text-muted outline-none" required /></DebtRecordRow>
-        <DebtRecordRow label="Due date"><input aria-label="Debt due date" type="date" value={dueDate} min={date} onChange={(event) => setDueDate(event.target.value)} className="w-full bg-transparent text-right text-sm font-bold text-muted outline-none" /></DebtRecordRow>
-        <DebtRecordRow label="Name"><input aria-label="Debt name" value={recordName} onChange={(event) => setRecordName(event.target.value)} className="w-full bg-transparent text-sm font-bold outline-none placeholder:text-slate-400" placeholder="What was it for?" required /></DebtRecordRow>
+        <DebtRecordRow label="Date"><input aria-label="Debt date" name="debt-date" autoComplete="off" type="date" value={date} onChange={(event) => setDate(event.target.value)} className="w-full bg-transparent text-right text-sm font-bold text-muted outline-none" required /></DebtRecordRow>
+        <DebtRecordRow label="Due date"><input aria-label="Debt due date" name="due-date" autoComplete="off" type="date" value={dueDate} min={date} onChange={(event) => setDueDate(event.target.value)} className="w-full bg-transparent text-right text-sm font-bold text-muted outline-none" /></DebtRecordRow>
+        <DebtRecordRow label="Name"><input aria-label="Debt name" name="debt-name" autoComplete="off" value={recordName} onChange={(event) => setRecordName(event.target.value)} className="w-full bg-transparent text-sm font-bold outline-none placeholder:text-slate-400" placeholder="e.g. Restaurant bill…" required /></DebtRecordRow>
         <DebtRecordRow label="Memo" alignStart>
           <div className="flex min-w-0 items-start gap-2">
-            <textarea aria-label="Debt memo" value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="min-h-16 min-w-0 flex-1 resize-none bg-transparent text-sm leading-6 outline-none placeholder:text-slate-400" placeholder="Tap to edit (optional)" />
+            <textarea aria-label="Debt memo" name="debt-memo" autoComplete="off" value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="min-h-16 min-w-0 flex-1 resize-none bg-transparent text-sm leading-6 outline-none placeholder:text-slate-400" placeholder="Add a note (optional)…" />
             <label className="grid size-10 shrink-0 cursor-pointer place-items-center rounded-xl bg-brand-soft text-brand-dark" aria-label="Attach debt photos"><Camera size={19} /><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple className="sr-only" onChange={(event) => { addPhotos(event.target.files); event.target.value = ""; }} /></label>
           </div>
           {((editingDebtRecord?.photoNames?.length ?? 0) > 0 || photos.length > 0) && <div className="mt-2 grid gap-1.5">
             {(editingDebtRecord?.photoNames ?? []).map((photoName, index) => <span key={`${photoName}-${index}`} className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photoName}</span><span className="ml-auto shrink-0 text-[0.62rem] text-muted">Saved</span></span>)}
-            {photos.map((photo, index) => <span key={`${photo.name}-${photo.lastModified}-${index}`} className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photo.name}</span><button type="button" onClick={() => setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index))} className="ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-danger" aria-label={`Remove ${photo.name}`}><X size={14} /></button></span>)}
+            {photos.map((photo, index) => <span key={`${photo.name}-${photo.lastModified}-${index}`} className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photo.name}</span><button type="button" onClick={() => { setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index)); setFormDirty(true); }} className="ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-danger" aria-label={`Remove ${photo.name}`}><X size={14} /></button></span>)}
           </div>}
           <p className="mt-2 text-[0.68rem] leading-5 text-muted">Up to 5 JPEG, PNG, or WebP photos · 15 MB each</p>
         </DebtRecordRow>
@@ -213,10 +212,12 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
         <DebtRecordRow label={direction === "lent" ? "Who owes you?" : "Who do you owe?"} alignStart>
           <textarea
             aria-label={direction === "lent" ? "Who owes you?" : "Who do you owe?"}
+            name="people"
+            autoComplete="off"
             value={personNamesInput}
             onChange={(event) => setPersonNamesInput(event.target.value)}
             className="min-h-28 w-full resize-y bg-transparent text-sm font-bold leading-6 outline-none placeholder:text-slate-400"
-            placeholder={"Mary\nPeter\nTom\nPaul"}
+            placeholder={"e.g. Mary\nPeter\nTom\nPaul"}
             required
           />
           <p className="mt-2 text-xs leading-5 text-muted">{editMode ? "Edit the person attached to this debt record." : "Use new lines or commas · English and Chinese supported"}</p>
@@ -239,12 +240,12 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
               ["exact", "Exact"],
               ["percentage", "%"],
               ["shares", "Shares"],
-            ] as const).map(([method, label]) => <button key={method} type="button" onClick={() => setShareMethod(method)} className={`min-h-11 rounded-xl px-1 text-xs font-extrabold transition ${shareMethod === method ? "bg-brand text-[#103a55] shadow-sm" : "bg-slate-50 text-muted"}`}>{label}</button>)}
+            ] as const).map(([method, label]) => <button key={method} type="button" onClick={() => { setShareMethod(method); setFormDirty(true); }} className={`min-h-11 rounded-xl px-1 text-xs font-extrabold transition hover:text-ink ${shareMethod === method ? "bg-brand text-brand-ink shadow-sm" : "bg-slate-50 text-muted hover:bg-brand-soft"}`}>{label}</button>)}
           </div>
         </DebtRecordRow>}
 
         {!editMode && <div className="grid grid-cols-[108px_1fr] gap-4 border-b border-line py-4">
-          <div className="pt-2"><p className="text-sm font-extrabold">Split by</p>{personNames.length > 0 && shareMethod !== "equal" && <button type="button" onClick={() => setShareValues((current) => ({ ...current, [shareMethod]: {} }))} className="mt-2 text-[0.68rem] font-extrabold text-brand-dark">Reset</button>}</div>
+          <div className="pt-2"><p className="text-sm font-extrabold">Split by</p>{personNames.length > 0 && shareMethod !== "equal" && <button type="button" onClick={() => { setShareValues((current) => ({ ...current, [shareMethod]: {} })); setFormDirty(true); }} className="mt-2 text-[0.68rem] font-extrabold text-brand-dark hover:underline">Reset</button>}</div>
           <div className="grid gap-1">
             {splitParticipants.map((participant) => {
               const active = !excludedSplitKeys.includes(participant.key);
@@ -256,6 +257,8 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
               {active && (shareMethod === "equal" ? <span className="shrink-0 text-xs font-extrabold text-muted">{calculatedShare === undefined ? "—" : formatMoney(calculatedShare, currency)}</span> : <div className="relative w-28">
                 <input
                   aria-label={`${participant.isMe ? "My" : participant.name} ${shareMethod}`}
+                  name={`share-${participant.key}`}
+                  autoComplete="off"
                   type="number"
                   min="0"
                   max={shareMethod === "percentage" ? "100" : undefined}
@@ -268,26 +271,26 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
                 <span className="pointer-events-none absolute right-2 top-3 text-[0.62rem] font-bold text-muted">{shareMethod === "percentage" ? "%" : shareMethod === "shares" ? "×" : currency}</span>
               </div>)}
               {!active && <span className="shrink-0 text-xs font-bold text-muted">Excluded</span>}
-              <button type="button" onClick={() => toggleSplitParticipant(participant.key)} aria-label={`${active ? "Exclude" : "Include"} ${participant.isMe ? "me" : participant.name}`} aria-pressed={active} className={`grid size-8 shrink-0 place-items-center rounded-full border transition ${active ? "border-brand bg-brand text-[#103a55]" : "border-slate-300 bg-white"}`}>{active && <Check size={17} strokeWidth={2.7} />}</button>
+              <button type="button" onClick={() => toggleSplitParticipant(participant.key)} aria-label={`${active ? "Exclude" : "Include"} ${participant.isMe ? "me" : participant.name}`} aria-pressed={active} className={`grid size-8 shrink-0 place-items-center rounded-full border transition ${active ? "border-brand bg-brand text-brand-ink" : "border-slate-300 bg-white"}`}>{active && <Check size={17} strokeWidth={2.7} />}</button>
             </div>})}
             {personNames.length === 0 && <p className="py-3 text-sm leading-6 text-muted">Add names above to edit each person&apos;s share.</p>}
           </div>
         </div>}
 
-        {personNames.length > 0 && numericAmount > 0 && <div className={`mt-5 rounded-xl px-4 py-3 text-sm ${shareError ? "bg-danger-soft font-semibold text-danger" : "bg-brand-soft font-bold text-brand-dark"}`}>{shareError || (editMode ? `Updated record · ${formatMoney(calculatedShares[0] ?? 0, currency)}` : `Your share ${formatMoney(activeSplitParticipants.find((participant) => participant.isMe) ? calculatedShares[activeSplitParticipants.findIndex((participant) => participant.isMe)] ?? 0 : 0, currency)} · ${direction === "borrowed" ? "Total owed" : "To collect"} ${formatMoney(calculatedShares.reduce((sum, value, index) => sum + (activeSplitParticipants[index]?.isMe ? 0 : value), 0), currency)}`)}</div>}
-        {error && <p role="alert" className="mt-3 rounded-xl bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">{error}</p>}
+        {personNames.length > 0 && numericAmount > 0 && <div role={shareError ? "alert" : undefined} aria-live="polite" className={`mt-5 rounded-xl px-4 py-3 text-sm ${shareError ? "bg-danger-soft font-semibold text-danger" : "bg-brand-soft font-bold text-brand-dark"}`}>{shareError || (editMode ? `Updated record · ${formatMoney(calculatedShares[0] ?? 0, currency)}` : `Your share ${formatMoney(activeSplitParticipants.find((participant) => participant.isMe) ? calculatedShares[activeSplitParticipants.findIndex((participant) => participant.isMe)] ?? 0 : 0, currency)} · ${direction === "borrowed" ? "Total owed" : "To collect"} ${formatMoney(calculatedShares.reduce((sum, value, index) => sum + (activeSplitParticipants[index]?.isMe ? 0 : value), 0), currency)}`)}</div>}
+        {error && <p id="debt-form-error" role="alert" aria-live="assertive" tabIndex={-1} className="mt-3 rounded-xl bg-danger-soft px-4 py-3 text-sm font-semibold text-danger outline-none">{error}</p>}
         <p className="mt-5 text-center text-xs leading-5 text-muted">{editMode ? "Changes keep the current paid or unpaid status and sync when connected." : "Each person is saved as a separate debt record and synced when connected."}</p>
       </form>
     </div>
   );
 
   return (
-    <div className="grid gap-6 animate-rise">
+    <div className="grid gap-6">
       <PageTitle
         eyebrow="Separate personal ledger"
         title={view === "records" ? "Payment status" : "Debt records"}
         subtitle={view === "records" ? "View every paid and unpaid debt record." : "After you cover a shared bill, add each person's share and mark it paid when they reimburse you."}
-        action={<Link href="/debts/new" className="grid size-11 place-items-center rounded-xl bg-brand text-[#103a55]" aria-label="Add debt record"><Plus size={20} /></Link>}
+        action={<Link href="/debts/new" className="grid size-11 place-items-center rounded-xl bg-brand text-brand-ink" aria-label="Add debt record"><Plus size={20} /></Link>}
       />
 
       {view === "overview" && <div className="flex items-start gap-3 rounded-xl border border-brand/30 bg-brand-soft/55 p-4 text-sm text-brand-dark">
@@ -306,10 +309,10 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
           {(["all", "unpaid", "paid"] as const).map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`min-h-10 rounded-lg text-xs font-extrabold capitalize transition ${filter === value ? "bg-white text-ink shadow-sm" : "text-muted"}`}>{value}</button>)}
         </div>
         <Card className="divide-y divide-line overflow-hidden">
-          {records.length === 0 ? <EmptyState icon={<HandCoins size={24} />} title={filter === "unpaid" ? "No unpaid debts" : "No debt records"} body={filter === "all" ? "Add each person's share after you cover a bill." : `No ${filter} records match this filter.`} action={<Link href="/debts/new" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-brand px-4 text-sm font-bold text-[#103a55]">Add debt record</Link>} /> : records.map((record) => {
+          {records.length === 0 ? <EmptyState icon={<HandCoins size={24} />} title={filter === "unpaid" ? "No unpaid debts" : "No debt records"} body={filter === "all" ? "Add each person's share after you cover a bill." : `No ${filter} records match this filter.`} action={<Link href="/debts/new" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-brand px-4 text-sm font-bold text-brand-ink">Add debt record</Link>} /> : records.map((record) => {
             const borrowed = record.direction === "borrowed";
             const relation = borrowed ? `You owe ${record.personName}` : `${record.personName} owes you`;
-            return <article key={record.id} className={`flex items-start gap-3 p-4 ${record.status === "paid" ? "bg-slate-50/70" : ""}`}>
+            return <article key={record.id} className={`virtual-list-item flex items-start gap-3 p-4 ${record.status === "paid" ? "bg-slate-50/70" : ""}`}>
               <span className={`grid size-11 shrink-0 place-items-center rounded-xl ${borrowed ? "bg-danger-soft text-danger" : "bg-success-soft text-success"}`}>{borrowed ? <ArrowDownLeft size={20} /> : <ArrowUpRight size={20} />}</span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-extrabold">{record.name || relation}</p><p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">{record.name && <span>{relation} ·</span>}<CalendarDays size={13} /> {formatDebtDate(record.date)}{record.dueDate ? ` · Due ${formatDebtDate(record.dueDate)}` : ""}</p></div><p className={`shrink-0 text-sm font-extrabold ${borrowed ? "text-danger" : "text-success"}`}>{formatMoney(record.amount, record.currency)}</p></div>

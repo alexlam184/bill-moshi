@@ -11,13 +11,16 @@ import {
   Pencil,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { useBillMoshi } from "@/components/providers/app-provider";
-import { Avatar, Card } from "@/components/ui/primitives";
+import { Avatar, Button, Card } from "@/components/ui/primitives";
 import { formatMoney } from "@/lib/domain/calculations";
 import type { CurrencyCode, ExpenseSplit } from "@/lib/domain/types";
+import { useDialogFocus } from "@/lib/hooks/use-dialog-focus";
 
 export function ExpenseDetailsScreen({ expenseId }: { expenseId: string }) {
   const router = useRouter();
@@ -32,6 +35,8 @@ export function ExpenseDetailsScreen({ expenseId }: { expenseId: string }) {
     syncNow,
   } = useBillMoshi();
   const expense = snapshot.expenses.find((item) => item.id === expenseId);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteDialogRef = useDialogFocus<HTMLElement>(() => setDeleteOpen(false), deleteOpen);
 
   if (!expense) {
     return hydrated
@@ -59,24 +64,24 @@ export function ExpenseDetailsScreen({ expenseId }: { expenseId: string }) {
   const splitLabel = expense.recordType === "expense" ? "Split by" : expense.recordType === "income" ? "Shared with" : "To";
 
   function remove() {
-    if (!window.confirm(group ? `Delete this ${recordLabel.toLowerCase()} record? This will change everyone’s balances.` : `Delete this personal ${recordLabel.toLowerCase()} record?`)) return;
     deleteExpense(currentExpense.id);
+    setDeleteOpen(false);
     router.push(backHref);
   }
 
   return (
-    <div className="min-h-dvh bg-white animate-rise">
-      <header className="sticky top-0 z-20 grid min-h-16 grid-cols-[48px_1fr_104px] items-center border-b border-line bg-white/95 px-3 backdrop-blur sm:px-5">
+    <div className="min-h-dvh bg-white">
+      <header className="safe-top-header sticky top-0 z-20 grid grid-cols-[48px_1fr_104px] items-center border-b border-line bg-white/95 px-3 backdrop-blur sm:px-5">
         <Link href={backHref} className="grid size-11 place-items-center rounded-full bg-slate-50 text-ink transition hover:bg-slate-100" aria-label="Back to records"><ArrowLeft size={22} /></Link>
         <h1 className="text-center text-lg font-extrabold tracking-tight">Details</h1>
         <div className="flex justify-end gap-2">
           <details className="group relative">
             <summary className="grid size-11 cursor-pointer list-none place-items-center rounded-full bg-slate-50 text-ink transition hover:bg-slate-100" aria-label="More record actions"><Ellipsis size={23} /></summary>
             <div className="absolute right-0 top-12 z-30 w-48 rounded-xl border border-line bg-white p-1.5 shadow-xl">
-              <button type="button" onClick={remove} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-bold text-danger hover:bg-danger-soft"><Trash2 size={17} /> Delete record</button>
+              <button type="button" onClick={() => setDeleteOpen(true)} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-bold text-danger hover:bg-danger-soft"><Trash2 size={17} /> Delete Record</button>
             </div>
           </details>
-          <Link href={`/expenses/${expense.id}/edit`} className="grid size-11 place-items-center rounded-full bg-brand text-[#103a55] shadow-sm transition hover:bg-[#62afe5]" aria-label="Edit expense"><Pencil size={19} /></Link>
+          <Link href={`/expenses/${expense.id}/edit`} className="grid size-11 place-items-center rounded-full bg-brand text-brand-ink shadow-sm transition hover:bg-brand-hover" aria-label="Edit expense"><Pencil size={19} /></Link>
         </div>
       </header>
 
@@ -91,7 +96,7 @@ export function ExpenseDetailsScreen({ expenseId }: { expenseId: string }) {
           <div className="mt-6 border-t border-line pt-3 text-right">
             <time dateTime={expense.transactionDate} className="text-sm font-bold text-muted">{formatDateTime(expense.transactionDate)}</time>
           </div>
-          <button type="button" onClick={() => void syncNow()} disabled={syncing} className={`ml-auto mt-3 flex min-h-9 items-center gap-2 rounded-full px-3 text-xs font-extrabold transition disabled:opacity-60 ${expense.syncStatus === "synced" ? "bg-success-soft text-success" : isOnline ? "bg-warning-soft text-warning" : "bg-slate-100 text-muted"}`} aria-label="Sync this record">
+          <button type="button" onClick={() => void syncNow()} disabled={syncing} aria-live="polite" className={`ml-auto mt-3 flex min-h-9 items-center gap-2 rounded-full px-3 text-xs font-extrabold transition disabled:opacity-60 ${expense.syncStatus === "synced" ? "bg-success-soft text-success" : isOnline ? "bg-warning-soft text-warning" : "bg-slate-100 text-muted"}`} aria-label="Sync this record">
             {!isOnline ? <CloudOff size={14} /> : expense.syncStatus === "synced" ? <CheckCircle2 size={14} /> : <Cloud size={14} />}
             {syncLabel}{pendingCount > 0 && expense.syncStatus !== "synced" ? ` · ${pendingCount} pending` : ""}
           </button>
@@ -145,6 +150,7 @@ export function ExpenseDetailsScreen({ expenseId }: { expenseId: string }) {
           {expense.updatedAt !== expense.createdAt && <p>Updated {formatDateTime(expense.updatedAt)}</p>}
         </footer>
       </div>
+      {deleteOpen && <div className="animate-overlay-fade fixed inset-0 z-[80] grid items-end overscroll-contain bg-slate-950/45 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="delete-record-title"><button type="button" className="absolute inset-0" aria-label="Cancel deleting record" onClick={() => setDeleteOpen(false)} /><section ref={deleteDialogRef} className="animate-sheet-in safe-bottom relative w-full max-w-md rounded-t-[1.75rem] bg-white p-5 shadow-2xl sm:rounded-[1.75rem] sm:p-6"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-extrabold uppercase tracking-[0.13em] text-danger">Permanent Action</p><h2 id="delete-record-title" className="mt-1 text-xl font-extrabold tracking-tight">Delete This {recordLabel}?</h2></div><button type="button" onClick={() => setDeleteOpen(false)} className="grid size-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-muted hover:bg-slate-100 hover:text-ink" aria-label="Close"><X size={20} /></button></div><p className="mt-5 rounded-xl bg-danger-soft p-4 text-sm leading-6 text-ink">{group ? "This permanently removes the record and changes everyone’s balances." : "This permanently removes the personal record."} This cannot be undone.</p><div className="mt-6 grid grid-cols-2 gap-3"><Button type="button" variant="secondary" onClick={() => setDeleteOpen(false)}>Cancel</Button><Button type="button" variant="danger" onClick={remove}><Trash2 size={16} /> Delete Record</Button></div></section></div>}
     </div>
   );
 }
@@ -185,7 +191,7 @@ function formatAmountOnly(value: number, currency: CurrencyCode) {
 }
 
 function formatExchangeRate(rate: number) {
-  return rate.toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
+  return new Intl.NumberFormat("en-CA", { maximumFractionDigits: 8, useGrouping: false }).format(rate);
 }
 
 function formatRateDate(value: string) {

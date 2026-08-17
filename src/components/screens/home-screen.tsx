@@ -46,10 +46,10 @@ export function HomeScreen() {
   const reportingIncomplete = missingRates.length > 0 || reportingSummary.missingSettlementCount > 0;
 
   return (
-    <div className="grid gap-7 animate-rise">
-      <PageTitle eyebrow="Good afternoon" title={`Hi, ${snapshot.currentUser.name.split(" ")[0]} 👋`} subtitle="Here’s where your shared spending stands." action={<Link href="/calendar" aria-label="Open monthly calendar" className="grid size-11 place-items-center rounded-xl border border-line bg-white text-brand-dark card-shadow transition hover:border-brand hover:bg-brand-soft"><CalendarDays size={20} /></Link>} />
+    <div className="grid min-w-0 gap-7">
+      <PageTitle title={`Hi, ${snapshot.currentUser.name.split(" ")[0]} 👋`} subtitle="Here’s where your shared spending stands." action={<Link href="/calendar" aria-label="Open monthly calendar" className="grid size-11 place-items-center rounded-xl border border-line bg-white text-brand-dark card-shadow transition-colors hover:border-brand hover:bg-brand-soft"><CalendarDays size={20} /></Link>} />
 
-      <Card className="overflow-hidden border-0 bg-gradient-to-br from-[#dff2ff] via-[#f2f9fe] to-white p-5 sm:p-6">
+      <Card className="overflow-hidden border-0 bg-gradient-to-br from-balance-start via-balance-middle to-white p-5 sm:p-6">
         <div className="flex items-center justify-between">
           <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-brand-dark">Overall balance</p>
           <span className="rounded-full bg-white/80 px-2.5 py-1 text-xs font-bold text-muted">All groups</span>
@@ -66,7 +66,7 @@ export function HomeScreen() {
       </Card>
 
       <section>
-        <div className="mb-3 flex items-center justify-between"><div><h2 className="text-lg font-extrabold tracking-tight">Your groups</h2><p className="mt-0.5 text-xs text-muted">Family, roommates, friends, and teams.</p></div><Link href="/groups/new" className="text-sm font-bold text-brand-dark">New group</Link></div>
+        <div className="mb-3 flex items-center justify-between"><div><h2 className="text-lg font-extrabold tracking-tight">Your groups</h2><p className="mt-0.5 text-xs text-muted">Family, roommates, friends, and teams.</p></div><Link href="/groups/new" className="inline-flex min-h-11 items-center whitespace-nowrap text-sm font-bold text-brand-dark">New group</Link></div>
         <div className="grid gap-3 sm:grid-cols-2">
           {snapshot.groups.slice(0, 4).map((group) => {
             const events = snapshot.events.filter((event) => event.groupId === group.id);
@@ -81,7 +81,7 @@ export function HomeScreen() {
       </section>
 
       <section>
-        <div className="mb-3 flex items-center justify-between"><div><h2 className="text-lg font-extrabold tracking-tight">Recent records</h2><p className="mt-0.5 text-xs text-muted">All groups + Myself</p></div><Link href="/records" className="text-sm font-bold text-brand-dark">View records</Link></div>
+        <div className="mb-3 flex items-center justify-between"><div><h2 className="text-lg font-extrabold tracking-tight">Recent records</h2><p className="mt-0.5 text-xs text-muted">All groups + Myself</p></div><Link href="/records" className="inline-flex min-h-11 items-center whitespace-nowrap text-sm font-bold text-brand-dark">View records</Link></div>
         <Card className="divide-y divide-line overflow-hidden">
           {recentExpenses.length === 0 ? <div className="p-7 text-center text-sm text-muted">No records yet.</div> : recentExpenses.map((expense) => {
             const category = snapshot.categories.find((item) => item.id === expense.categoryId);

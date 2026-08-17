@@ -36,14 +36,18 @@ import {
 } from "@/lib/domain/calculations";
 import type { CurrencyCode, GroupMember } from "@/lib/domain/types";
 import { Avatar, Button, Card, EmptyState, PageTitle } from "@/components/ui/primitives";
+import { useQueryState } from "@/lib/hooks/use-query-state";
+import { useUnsavedChanges } from "@/lib/hooks/use-unsaved-changes";
+import { useDialogFocus } from "@/lib/hooks/use-dialog-focus";
 
 export function GroupDashboardScreen({ groupId }: { groupId: string }) {
   const router = useRouter();
   const { snapshot, hydrated, addExpense, updateGroupNotes, leaveGroup, deleteGroup } = useBillMoshi();
   const group = snapshot.groups.find((item) => item.id === groupId);
-  const [eventsOpen, setEventsOpen] = useState(true);
-  const [spendingMode, setSpendingMode] = useState<"group" | "mine">("group");
-  const [currency, setCurrency] = useState<CurrencyCode>(group?.currency ?? snapshot.currentUser.defaultCurrency);
+  const [eventsVisibility, setEventsVisibility] = useQueryState<"shown" | "hidden">("events", "shown", ["shown", "hidden"]);
+  const eventsOpen = eventsVisibility === "shown";
+  const [spendingMode, setSpendingMode] = useQueryState<"group" | "mine">("spending", "group", ["group", "mine"]);
+  const [currency, setCurrency] = useQueryState<CurrencyCode>("currency", group?.currency ?? snapshot.currentUser.defaultCurrency);
   const [selectedDebt, setSelectedDebt] = useState<{ debt: Debt; from: GroupMember; to: GroupMember }>();
   const [debtModalStep, setDebtModalStep] = useState<"review" | "confirm" | "success">("review");
   const [settlingDebt, setSettlingDebt] = useState(false);
@@ -51,6 +55,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
   const [settlementRecordId, setSettlementRecordId] = useState<string>();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [leaveModalOpen, setLeaveModalOpen] = useState(false);
 
   if (!group && !hydrated) return <div className="min-h-48 animate-pulse rounded-[1.35rem] bg-slate-50" />;
   if (!group) notFound();
@@ -96,8 +101,8 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
   const isOwner = currentGroup.ownerId === snapshot.currentUser.id;
 
   function leaveCurrentGroup() {
-    if (!window.confirm(`Leave ${currentGroup.name}? You will lose access to its events, expenses, balances, and receipts.`)) return;
     leaveGroup(currentGroup.id);
+    setLeaveModalOpen(false);
     router.push("/");
   }
 
@@ -158,28 +163,27 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
   }
 
   return (
-    <div className="grid gap-7 animate-rise">
+    <div className="grid min-w-0 gap-7">
       <PageTitle
-        eyebrow="Group"
         title={`${group.emoji} ${group.name}`}
         subtitle={group.description ?? "A shared space for your events and activities."}
-        action={<div className="flex shrink-0 items-center gap-2"><Link href={`/groups/${group.id}/calendar`} className="grid size-11 place-items-center rounded-xl border border-line bg-white text-brand-dark card-shadow transition hover:border-brand hover:bg-brand-soft" aria-label="Open monthly calendar"><CalendarDays size={20} /></Link><Link href={`/expenses/new?groupId=${group.id}`} className="grid size-11 place-items-center rounded-xl bg-brand text-[#103a55]" aria-label="Add daily record"><Plus size={21} /></Link></div>}
+        action={<div className="flex shrink-0 items-center gap-2"><Link href={`/groups/${group.id}/calendar`} className="grid size-11 place-items-center rounded-xl border border-line bg-white text-brand-dark card-shadow transition-colors hover:border-brand hover:bg-brand-soft" aria-label="Open monthly calendar"><CalendarDays size={20} /></Link><Link href={`/expenses/new?groupId=${group.id}`} className="grid size-11 place-items-center rounded-xl bg-brand text-brand-ink" aria-label="Add daily record"><Plus size={21} /></Link></div>}
       />
 
       <Card className="overflow-hidden p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="relative w-fit">
-              <select aria-label="Spending view" value={spendingMode} onChange={(event) => setSpendingMode(event.target.value as "group" | "mine")} className="appearance-none bg-transparent pr-6 text-base font-extrabold outline-none">
+              <select aria-label="Spending view" name="spending-view" autoComplete="off" value={spendingMode} onChange={(event) => setSpendingMode(event.target.value as "group" | "mine")} className="min-h-11 appearance-none bg-transparent pr-6 text-base font-extrabold outline-none">
                 <option value="group">Group Spending</option>
                 <option value="mine">My Spending</option>
               </select>
-              <ChevronDown size={16} className="pointer-events-none absolute right-0 top-1 text-muted" />
+              <ChevronDown size={16} className="pointer-events-none absolute right-0 top-3.5 text-muted" />
             </div>
             <p className="mt-3 text-3xl font-extrabold tracking-[-0.05em]">{formatMoney(spendingTotal, selectedCurrency)}</p>
             <p className="mt-1 text-xs text-muted">Last 7 days ending {formatShortDate(spendingDays.at(-1)?.date)}</p>
           </div>
-          <select aria-label="Dashboard currency" value={selectedCurrency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="rounded-lg bg-slate-50 px-2 py-1.5 text-xs font-extrabold text-muted outline-none">
+          <select aria-label="Dashboard currency" name="dashboard-currency" autoComplete="off" value={selectedCurrency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="min-h-11 rounded-lg bg-slate-50 px-2 text-xs font-extrabold text-muted outline-none">
             {availableCurrencies.map((code) => <option key={code}>{code}</option>)}
           </select>
         </div>
@@ -205,17 +209,17 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
           const from = groupMembers.find((member) => member.userId === debt.fromMemberId);
           const to = groupMembers.find((member) => member.userId === debt.toMemberId);
           if (!from || !to) return null;
-          return <button type="button" key={`${debt.fromMemberId}-${debt.toMemberId}`} onClick={() => openDebtSettlement(debt, from, to)} aria-label={`Settle debt: ${from.name} pays ${to.name} ${formatMoney(debt.amount, selectedCurrency)}`} className="grid w-full grid-cols-[74px_1fr_74px] items-center gap-2 px-4 py-5 text-center transition hover:bg-brand-soft/35 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-brand-soft"><div className="grid justify-items-center gap-1.5"><Avatar name={from.name} color={from.avatarColor} /><p className="max-w-[74px] truncate text-xs font-extrabold">{from.name}</p></div><div><p className="text-[0.68rem] font-bold text-muted">needs to pay</p><div className="my-1.5 flex items-center"><span className="h-px flex-1 bg-slate-300" /><ArrowRight size={17} className="text-slate-400" /></div><p className="text-sm font-extrabold">{formatMoney(debt.amount, selectedCurrency)}</p><p className="mt-1 text-[0.62rem] font-extrabold text-brand-dark">Tap to settle</p></div><div className="grid justify-items-center gap-1.5"><Avatar name={to.name} color={to.avatarColor} /><p className="max-w-[74px] truncate text-xs font-extrabold">{to.name}</p></div></button>;
+          return <button type="button" key={`${debt.fromMemberId}-${debt.toMemberId}`} onClick={() => openDebtSettlement(debt, from, to)} aria-label={`Settle debt: ${from.name} pays ${to.name} ${formatMoney(debt.amount, selectedCurrency)}`} className="grid w-full grid-cols-[70px_minmax(0,1fr)_70px] items-center gap-2 px-3 py-5 text-center transition-colors hover:bg-brand-soft/35"><div className="grid min-w-0 justify-items-center gap-1.5"><Avatar name={from.name} color={from.avatarColor} /><p className="w-full truncate text-xs font-extrabold">{from.name}</p></div><div className="min-w-0"><p className="text-[0.68rem] font-bold text-muted">needs to pay</p><div className="my-1.5 flex items-center"><span className="h-px flex-1 bg-slate-300" /><ArrowRight size={17} className="text-slate-400" /></div><p className="truncate text-sm font-extrabold">{formatMoney(debt.amount, selectedCurrency)}</p><p className="mt-1 text-[0.62rem] font-extrabold text-brand-dark">Tap to settle</p></div><div className="grid min-w-0 justify-items-center gap-1.5"><Avatar name={to.name} color={to.avatarColor} /><p className="w-full truncate text-xs font-extrabold">{to.name}</p></div></button>;
         })}</div>}
       </Card>
 
       <section>
         <div className="mb-3 flex items-center justify-between">
           <div><h2 className="text-lg font-extrabold tracking-tight">Daily records</h2><p className="mt-0.5 text-xs text-muted">Expenses, income, and member transfers without an event.</p></div>
-          <Link href={`/expenses/new?groupId=${group.id}`} className="text-sm font-bold text-brand-dark">Add record</Link>
+          <Link href={`/expenses/new?groupId=${group.id}`} className="inline-flex min-h-11 shrink-0 items-center whitespace-nowrap text-sm font-bold text-brand-dark">Add record</Link>
         </div>
         {dailyExpenses.length === 0 ? (
-          <Card><EmptyState icon={<ReceiptText size={24} />} title="No daily records yet" body="Add an expense, income, or transfer directly to this group." action={<Link href={`/expenses/new?groupId=${group.id}`} className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-extrabold text-[#103a55]">Add daily record</Link>} /></Card>
+          <Card><EmptyState icon={<ReceiptText size={24} />} title="No daily records yet" body="Add an expense, income, or transfer directly to this group." action={<Link href={`/expenses/new?groupId=${group.id}`} className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-extrabold text-brand-ink">Add daily record</Link>} /></Card>
         ) : (
           <Card className="divide-y divide-line p-0">
             {dailyExpenses.slice(0, 5).map((expense) => {
@@ -230,11 +234,11 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
 
       <section>
         <div className="mb-3 flex items-center justify-between gap-3">
-          <button type="button" aria-expanded={eventsOpen} onClick={() => setEventsOpen((open) => !open)} className="flex min-w-0 items-center gap-2 text-left"><div><h2 className="text-lg font-extrabold tracking-tight">Events</h2><p className="mt-0.5 text-xs text-muted">{eventsOpen ? "Hide" : "Show"} optional trips and activities.</p></div>{eventsOpen ? <ChevronUp size={19} className="shrink-0 text-muted" /> : <ChevronDown size={19} className="shrink-0 text-muted" />}</button>
-          <Link href={`/events/new?groupId=${group.id}`} className="shrink-0 text-sm font-bold text-brand-dark">Add event</Link>
+          <button type="button" aria-expanded={eventsOpen} aria-controls="group-events-list" onClick={() => setEventsVisibility(eventsOpen ? "hidden" : "shown")} className="flex min-w-0 items-center gap-2 text-left hover:text-brand-dark"><div><h2 className="text-lg font-extrabold tracking-tight">Events</h2><p className="mt-0.5 text-xs text-muted">{eventsOpen ? "Hide" : "Show"} optional trips and activities.</p></div>{eventsOpen ? <ChevronUp size={19} className="shrink-0 text-muted" /> : <ChevronDown size={19} className="shrink-0 text-muted" />}</button>
+          <Link href={`/events/new?groupId=${group.id}`} className="inline-flex min-h-11 shrink-0 items-center whitespace-nowrap text-sm font-bold text-brand-dark">Add event</Link>
         </div>
-        {eventsOpen && (events.length === 0 ? (
-          <Card><EmptyState icon={<CalendarPlus size={24} />} title="No events yet" body={`That’s okay—events are optional. Create one when ${group.name} has a specific trip or activity.`} action={<Link href={`/events/new?groupId=${group.id}`} className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-extrabold text-[#103a55]">Create event</Link>} /></Card>
+        {eventsOpen && <div id="group-events-list">{events.length === 0 ? (
+          <Card><EmptyState icon={<CalendarPlus size={24} />} title="No events yet" body={`That’s okay—events are optional. Create one when ${group.name} has a specific trip or activity.`} action={<Link href={`/events/new?groupId=${group.id}`} className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-extrabold text-brand-ink">Create event</Link>} /></Card>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {events.map((event) => {
@@ -250,12 +254,12 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
               );
             })}
           </div>
-        ))}
+        )}</div>}
       </section>
 
       <GroupNotesCard key={`${group.id}:${group.notes ?? ""}`} initialNotes={group.notes ?? ""} onSave={(notes) => updateGroupNotes(group.id, notes)} />
 
-      <Card className="grid grid-cols-3 gap-2 border-0 bg-gradient-to-br from-[#dff2ff] via-[#f2f9fe] to-white p-5">
+      <Card className="grid grid-cols-3 divide-x divide-line overflow-hidden border-0 bg-gradient-to-br from-balance-start via-balance-middle to-white p-0">
         <Summary value={events.length} label={events.length === 1 ? "Event" : "Events"} icon={<CalendarDays size={18} />} />
         <Summary value={groupMembers.length} label={groupMembers.length === 1 ? "Person" : "People"} icon={<UsersRound size={18} />} />
         <Summary value={expenses.length} label={expenses.length === 1 ? "Record" : "Records"} icon={<ReceiptText size={18} />} />
@@ -272,7 +276,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
         <div className="border-t border-line p-4">
           {isOwner
             ? <Button type="button" variant="danger" className="w-full" onClick={() => { setDeleteConfirmation(""); setDeleteModalOpen(true); }}><Trash2 size={17} /> Delete group</Button>
-            : <Button type="button" variant="danger" className="w-full" onClick={leaveCurrentGroup}><LogOut size={17} /> Leave group</Button>}
+            : <Button type="button" variant="danger" className="w-full" onClick={() => setLeaveModalOpen(true)}><LogOut size={17} /> Leave Group</Button>}
         </div>
       </Card>
 
@@ -296,6 +300,27 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
         onClose={closeDeleteModal}
         onConfirm={deleteCurrentGroup}
       />}
+      {leaveModalOpen && <LeaveGroupModal groupName={currentGroup.name} onClose={() => setLeaveModalOpen(false)} onConfirm={leaveCurrentGroup} />}
+    </div>
+  );
+}
+
+function LeaveGroupModal({ groupName, onClose, onConfirm }: { groupName: string; onClose(): void; onConfirm(): void }) {
+  const dialogRef = useDialogFocus<HTMLElement>(onClose);
+  return (
+    <div className="animate-overlay-fade fixed inset-0 z-[80] grid items-end overscroll-contain bg-slate-950/45 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="leave-group-title">
+      <button type="button" className="absolute inset-0" aria-label="Cancel leaving group" onClick={onClose} />
+      <section ref={dialogRef} className="animate-sheet-in safe-bottom relative w-full max-w-md rounded-t-[1.75rem] bg-white p-5 shadow-2xl sm:rounded-[1.75rem] sm:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div><p className="text-xs font-extrabold uppercase tracking-[0.13em] text-danger">Access will be removed</p><h2 id="leave-group-title" className="mt-1 text-xl font-extrabold tracking-tight">Leave <strong>&quot;{groupName}&quot;</strong>?</h2></div>
+          <button type="button" onClick={onClose} className="grid size-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-muted hover:bg-slate-100 hover:text-ink" aria-label="Close"><X size={20} /></button>
+        </div>
+        <p className="mt-5 rounded-xl bg-danger-soft p-4 text-sm leading-6 text-ink">You will lose access to this group&apos;s events, expenses, balances, and receipts. The owner and other members keep their history.</p>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="button" variant="danger" onClick={onConfirm}><LogOut size={16} /> Leave Group</Button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -308,6 +333,7 @@ function DeleteGroupModal({ groupName, confirmation, onConfirmationChange, onClo
   onConfirm(): void;
 }) {
   const confirmed = confirmation === groupName;
+  const dialogRef = useDialogFocus<HTMLElement>(onClose);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -315,12 +341,12 @@ function DeleteGroupModal({ groupName, confirmation, onConfirmationChange, onClo
   }
 
   return (
-    <div className="fixed inset-0 z-[80] grid items-end bg-slate-950/45 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="delete-group-title">
+    <div className="animate-overlay-fade fixed inset-0 z-[80] grid items-end overscroll-contain bg-slate-950/45 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="delete-group-title">
       <button type="button" className="absolute inset-0" aria-label="Cancel deleting group" onClick={onClose} />
-      <section className="safe-bottom relative w-full max-w-md rounded-t-[1.75rem] bg-white p-5 shadow-2xl sm:rounded-[1.75rem] sm:p-6">
+      <section ref={dialogRef} className="animate-sheet-in safe-bottom relative w-full max-w-md rounded-t-[1.75rem] bg-white p-5 shadow-2xl sm:rounded-[1.75rem] sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div><p className="text-xs font-extrabold uppercase tracking-[0.13em] text-danger">Permanent action</p><h2 id="delete-group-title" className="mt-1 text-xl font-extrabold tracking-tight">Delete <strong>&quot;{groupName}&quot;</strong>?</h2></div>
-          <button type="button" onClick={onClose} className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-50 text-muted" aria-label="Close"><X size={20} /></button>
+          <button type="button" onClick={onClose} className="grid size-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-muted" aria-label="Close"><X size={20} /></button>
         </div>
 
         <div className="mt-5 rounded-xl bg-danger-soft p-4 text-sm leading-6 text-ink">
@@ -333,11 +359,11 @@ function DeleteGroupModal({ groupName, confirmation, onConfirmationChange, onClo
             <input
               id="delete-group-confirmation"
               aria-label="Group name confirmation"
+              name="delete-group-confirmation"
               value={confirmation}
               onChange={(event) => onConfirmationChange(event.target.value)}
-              placeholder={groupName}
+              placeholder={`Type “${groupName}”…`}
               autoComplete="off"
-              autoFocus
               className="min-h-12 w-full rounded-xl border border-line bg-white px-3.5 text-base outline-none placeholder:text-slate-300 focus:border-danger focus:ring-4 focus:ring-danger-soft"
             />
           </label>
@@ -365,20 +391,22 @@ function DebtSettlementModal({ selection, currency, groupName, step, settling, e
   onConfirm(): void;
 }) {
   const { debt, from, to } = selection;
+  const dialogRef = useDialogFocus<HTMLElement>(onClose);
   return (
-    <div className="fixed inset-0 z-[70] grid items-end bg-slate-950/40 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="debt-settlement-title">
+    <div className="animate-overlay-fade fixed inset-0 z-[70] grid items-end overscroll-contain bg-slate-950/40 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="debt-settlement-title">
       <button type="button" className="absolute inset-0" aria-label="Close debt settlement" onClick={onClose} />
-      <section className="safe-bottom relative w-full max-w-md rounded-t-[1.75rem] bg-white p-5 shadow-2xl sm:rounded-[1.75rem] sm:p-6">
+      <section ref={dialogRef} className="animate-sheet-in safe-bottom relative w-full max-w-md rounded-t-[1.75rem] bg-white p-5 shadow-2xl sm:rounded-[1.75rem] sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div><p className="text-xs font-extrabold uppercase tracking-[0.13em] text-brand-dark">Debt relation</p><h2 id="debt-settlement-title" className="mt-1 text-xl font-extrabold tracking-tight">{step === "confirm" ? "Confirm settlement" : step === "success" ? "Debt settled" : "Settle debt"}</h2></div>
-          <button type="button" onClick={onClose} disabled={settling} className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-50 text-muted disabled:opacity-50" aria-label="Close"><X size={20} /></button>
+          <button type="button" onClick={onClose} disabled={settling} className="grid size-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-muted disabled:opacity-50" aria-label="Close"><X size={20} /></button>
         </div>
 
+        <div key={step} className="animate-content-swap">
         {step === "success" ? <div className="py-7 text-center">
           <span className="mx-auto grid size-16 place-items-center rounded-full bg-success-soft text-success"><CheckCircle2 size={32} /></span>
           <p className="mt-4 text-lg font-extrabold">Transfer recorded</p>
           <p className="mt-2 text-sm leading-6 text-muted">{from.name} paid {to.name} {formatMoney(debt.amount, currency)}. The Group balances have been updated.</p>
-          <div className="mt-6 grid gap-2">{recordId && <Link href={`/expenses/${recordId}`} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-brand px-4 text-sm font-extrabold text-[#103a55]">View transfer</Link>}<Button type="button" variant="secondary" onClick={onClose}>Done</Button></div>
+          <div className="mt-6 grid gap-2">{recordId && <Link href={`/expenses/${recordId}`} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-brand px-4 text-sm font-extrabold text-brand-ink">View transfer</Link>}<Button type="button" variant="secondary" onClick={onClose}>Done</Button></div>
         </div> : <>
           <div className="mt-6 grid grid-cols-[82px_1fr_82px] items-center gap-2 text-center">
             <div className="grid justify-items-center gap-2"><Avatar name={from.name} color={from.avatarColor} /><p className="w-full truncate text-xs font-extrabold">{from.name}</p></div>
@@ -388,9 +416,10 @@ function DebtSettlementModal({ selection, currency, groupName, step, settling, e
           <div className={`mt-6 rounded-xl p-4 text-sm leading-6 ${step === "confirm" ? "bg-warning-soft text-ink" : "bg-slate-50 text-muted"}`}>
             {step === "confirm" ? <>Confirm this payment was made. Bill Moshi will add a <strong>Transfer</strong> record to {groupName} and update the debt relation.</> : <>This creates a daily Group <strong>Transfer</strong> record. Original expenses and Event history stay unchanged.</>}
           </div>
-          {error && <p role="alert" className="mt-4 rounded-xl bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">{error}</p>}
-          {step === "confirm" ? <div className="mt-6 grid grid-cols-2 gap-3"><Button type="button" variant="secondary" onClick={onBack} disabled={settling}>Back</Button><Button type="button" onClick={onConfirm} disabled={settling} autoFocus>{settling ? "Recording…" : "Confirm transfer"}</Button></div> : <div className="mt-6 grid gap-2"><Button type="button" onClick={onSettle} autoFocus>Settle debt</Button><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button></div>}
+          {error && <p role="alert" aria-live="assertive" className="mt-4 rounded-xl bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">{error}</p>}
+          {step === "confirm" ? <div className="mt-6 grid grid-cols-2 gap-3"><Button type="button" variant="secondary" onClick={onBack} disabled={settling}>Back</Button><Button type="button" onClick={onConfirm} disabled={settling}>{settling ? "Recording…" : "Confirm Transfer"}</Button></div> : <div className="mt-6 grid gap-2"><Button type="button" onClick={onSettle}>Settle Debt</Button><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button></div>}
         </>}
+        </div>
       </section>
     </div>
   );
@@ -399,18 +428,19 @@ function DebtSettlementModal({ selection, currency, groupName, step, settling, e
 function GroupNotesCard({ initialNotes, onSave }: { initialNotes: string; onSave(notes: string): void }) {
   const [notes, setNotes] = useState(initialNotes);
   const changed = notes.trim() !== initialNotes;
+  useUnsavedChanges(changed);
 
   return (
     <Card className="p-5">
       <div className="mb-3 flex items-center gap-2"><NotebookPen size={18} className="text-brand-dark" /><h2 className="font-extrabold">Notes</h2></div>
-      <textarea aria-label="Group notes" value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Leave a note for this group" className="w-full resize-none rounded-xl border border-line bg-slate-50 px-4 py-3 text-sm leading-6 outline-none placeholder:text-slate-400 focus:border-brand focus:ring-4 focus:ring-brand-soft" />
+      <textarea aria-label="Group notes" name="group-notes" autoComplete="off" value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="e.g. Add a note for the group…" className="min-h-24 w-full resize-y rounded-xl border border-line bg-slate-50 px-4 py-3 text-sm leading-6 outline-none placeholder:text-placeholder focus:border-brand focus:ring-4 focus:ring-brand-soft" />
       {changed && <div className="mt-3 flex justify-end"><Button type="button" onClick={() => onSave(notes)}><Save size={16} /> Save note</Button></div>}
     </Card>
   );
 }
 
 function Summary({ value, label, icon }: { value: number; label: string; icon: React.ReactNode }) {
-  return <div className="rounded-2xl bg-white/80 px-3 py-4 text-center"><span className="mx-auto grid size-8 place-items-center rounded-xl bg-brand-soft text-brand-dark">{icon}</span><p className="mt-2 text-xl font-extrabold">{value}</p><p className="text-[0.68rem] font-bold text-muted">{label}</p></div>;
+  return <div className="min-w-0 px-2 py-5 text-center sm:px-4"><span className="mx-auto grid size-8 place-items-center rounded-xl bg-brand-soft text-brand-dark">{icon}</span><p className="mt-2 text-xl font-extrabold">{value}</p><p className="truncate text-[0.68rem] font-bold text-muted">{label}</p></div>;
 }
 
 function formatShortDate(date?: string) {

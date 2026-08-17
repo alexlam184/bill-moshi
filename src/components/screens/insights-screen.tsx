@@ -2,23 +2,24 @@
 
 import { ArrowDownRight, ArrowRightLeft, ArrowUpRight, CalendarRange, PieChart as PieChartIcon, ReceiptText, UserRound, UsersRound } from "lucide-react";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useBillMoshi } from "@/components/providers/app-provider";
 import { Card, EmptyState, PageTitle, fieldClass } from "@/components/ui/primitives";
 import { formatMoney } from "@/lib/domain/calculations";
 import { insightDateRange, recordInInsightDateRange, recordsForInsightScope, summarizeInsightRecords, type InsightDatePreset, type InsightLedger } from "@/lib/domain/insights";
 import type { Category, CurrencyCode } from "@/lib/domain/types";
+import { useQueryState } from "@/lib/hooks/use-query-state";
 
-const categoryColors = ["#6EBBF1", "#2FA36B", "#E35D6A", "#F59E0B", "#8B5CF6", "#14B8A6", "#64748B", "#EC4899"];
+const categoryColors = ["var(--color-chart-1)", "var(--color-chart-2)", "var(--color-chart-3)", "var(--color-chart-4)", "var(--color-chart-5)", "var(--color-chart-6)", "var(--color-chart-7)", "var(--color-chart-8)"];
 
 export function InsightsScreen() {
   const { snapshot, selectedGroupId, personalContext } = useBillMoshi();
-  const [ledger, setLedger] = useState<InsightLedger>(personalContext ? "myself" : "group");
-  const [currency, setCurrency] = useState<CurrencyCode>("CAD");
-  const [eventScope, setEventScope] = useState("all");
-  const [datePreset, setDatePreset] = useState<InsightDatePreset>("all");
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
+  const [ledger, setLedger] = useQueryState<InsightLedger>("ledger", personalContext ? "myself" : "group", ["group", "myself"]);
+  const [currency, setCurrency] = useQueryState<CurrencyCode>("currency", "CAD", ["CAD", "HKD", "JPY"]);
+  const [eventScope, setEventScope] = useQueryState<string>("event", "all");
+  const [datePreset, setDatePreset] = useQueryState<InsightDatePreset>("date", "all", ["all", "today", "last7", "last30", "month", "year", "custom"]);
+  const [customFrom, setCustomFrom] = useQueryState<string>("from", "");
+  const [customTo, setCustomTo] = useQueryState<string>("to", "");
 
   const currentGroup = snapshot.groups.find((group) => group.id === selectedGroupId);
   const groupEvents = currentGroup ? snapshot.events.filter((event) => event.groupId === currentGroup.id) : [];
@@ -57,7 +58,6 @@ export function InsightsScreen() {
     .map((group) => ({ group, total: expenses.filter((record) => record.groupId === group.id && !record.eventId).reduce((sum, record) => sum + record.amountBase, 0) }))
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total);
-  const eyebrow = ledger === "myself" ? "Myself" : currentGroup ? `${currentGroup.emoji} ${currentGroup.name}` : "Across groups";
   const subtitle = ledger === "myself"
     ? "Personal income and spending only—Group records are excluded."
     : currentGroup
@@ -65,18 +65,18 @@ export function InsightsScreen() {
       : "Showing records across Groups; personal records are excluded.";
 
   return (
-    <div className="grid gap-6 animate-rise">
-      <PageTitle eyebrow={eyebrow} title="Insight" subtitle={subtitle} />
+    <div className="grid min-w-0 gap-6">
+      <PageTitle title="Insight" subtitle={subtitle} />
 
       <Card className="p-3 sm:p-4">
         <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1" role="group" aria-label="Insight ledger">
-          <button type="button" aria-pressed={ledger === "group"} onClick={() => { setLedger("group"); setEventScope("all"); }} className={`flex min-h-11 items-center justify-center gap-2 rounded-lg text-sm font-extrabold transition ${ledger === "group" ? "bg-white text-ink shadow-sm" : "text-muted"}`}><UsersRound size={17} /> Group</button>
-          <button type="button" aria-pressed={ledger === "myself"} onClick={() => { setLedger("myself"); setEventScope("all"); }} className={`flex min-h-11 items-center justify-center gap-2 rounded-lg text-sm font-extrabold transition ${ledger === "myself" ? "bg-white text-ink shadow-sm" : "text-muted"}`}><UserRound size={17} /> Myself</button>
+          <button type="button" aria-pressed={ledger === "group"} onClick={() => { setLedger("group"); setEventScope("all"); }} className={`flex min-h-11 items-center justify-center gap-2 rounded-lg text-sm font-extrabold transition hover:text-ink ${ledger === "group" ? "bg-white text-ink shadow-sm" : "text-muted hover:bg-white/70"}`}><UsersRound size={17} /> Group</button>
+          <button type="button" aria-pressed={ledger === "myself"} onClick={() => { setLedger("myself"); setEventScope("all"); }} className={`flex min-h-11 items-center justify-center gap-2 rounded-lg text-sm font-extrabold transition hover:text-ink ${ledger === "myself" ? "bg-white text-ink shadow-sm" : "text-muted hover:bg-white/70"}`}><UserRound size={17} /> Myself</button>
         </div>
 
         <div className={`mt-3 grid gap-3 ${ledger === "group" && currentGroup ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
           <FilterField label="Date">
-            <select aria-label="Insight date" className={`${fieldClass} min-h-11 text-sm font-bold`} value={datePreset} onChange={(event) => setDatePreset(event.target.value as InsightDatePreset)}>
+            <select aria-label="Insight date" name="insight-date" autoComplete="off" className={`${fieldClass} min-h-11 text-sm font-bold`} value={datePreset} onChange={(event) => setDatePreset(event.target.value as InsightDatePreset)}>
               <option value="all">All time</option>
               <option value="today">Today</option>
               <option value="last7">Last 7 days</option>
@@ -86,11 +86,11 @@ export function InsightsScreen() {
               <option value="custom">Custom range</option>
             </select>
           </FilterField>
-          {ledger === "group" && currentGroup && <FilterField label="Event"><select aria-label="Insight event" className={`${fieldClass} min-h-11 text-sm font-bold`} value={selectedEventScope} onChange={(event) => setEventScope(event.target.value)}><option value="all">All events + daily</option>{groupEvents.map((event) => <option key={event.id} value={event.id}>{event.emoji} {event.name}</option>)}</select></FilterField>}
-          <FilterField label="Currency"><select aria-label="Insight currency" className={`${fieldClass} min-h-11 text-sm font-bold`} value={selectedCurrency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)}>{availableCurrencies.map((code) => <option key={code}>{code}</option>)}</select></FilterField>
+          {ledger === "group" && currentGroup && <FilterField label="Event"><select aria-label="Insight event" name="insight-event" autoComplete="off" className={`${fieldClass} min-h-11 text-sm font-bold`} value={selectedEventScope} onChange={(event) => setEventScope(event.target.value)}><option value="all">All Events + Daily</option>{groupEvents.map((event) => <option key={event.id} value={event.id}>{event.emoji} {event.name}</option>)}</select></FilterField>}
+          <FilterField label="Currency"><select aria-label="Insight currency" name="insight-currency" autoComplete="off" className={`${fieldClass} min-h-11 text-sm font-bold`} value={selectedCurrency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)}>{availableCurrencies.map((code) => <option key={code}>{code}</option>)}</select></FilterField>
         </div>
 
-        {datePreset === "custom" && <div className="mt-3 grid gap-3 border-t border-line pt-3 sm:grid-cols-2"><FilterField label="From"><input aria-label="Insight start date" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className={`${fieldClass} min-h-11 text-sm`} /></FilterField><FilterField label="To"><input aria-label="Insight end date" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className={`${fieldClass} min-h-11 text-sm`} /></FilterField>{dateError && <p className="text-xs font-bold text-danger sm:col-span-2">Start date must be on or before the end date.</p>}</div>}
+        {datePreset === "custom" && <div className="mt-3 grid gap-3 border-t border-line pt-3 sm:grid-cols-2"><FilterField label="From"><input aria-label="Insight start date" name="insight-start-date" autoComplete="off" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className={`${fieldClass} min-h-11 text-sm`} /></FilterField><FilterField label="To"><input aria-label="Insight end date" name="insight-end-date" autoComplete="off" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className={`${fieldClass} min-h-11 text-sm`} /></FilterField>{dateError && <p role="alert" aria-live="polite" className="text-xs font-bold text-danger sm:col-span-2">Start date must be on or before the end date.</p>}</div>}
         <p className="mt-3 flex items-center gap-2 text-xs text-muted"><CalendarRange size={14} />{dateRangeLabel(datePreset, dateRange.start, dateRange.end)}</p>
       </Card>
 
@@ -103,7 +103,7 @@ export function InsightsScreen() {
 
       <section>
         <div className="mb-3"><h2 className="text-lg font-extrabold">Expense by category</h2><p className="mt-1 text-xs text-muted">Proportion of Expense only; Income and Transfers are excluded.</p></div>
-        <Card className="p-5">{categoryTotals.length === 0 ? <EmptyState icon={<PieChartIcon size={24} />} title="No expense data" body={`No ${selectedCurrency} expenses match this scope and date filter.`} /> : <div className="grid items-center gap-6 md:grid-cols-[230px_1fr]"><CategoryDonut items={categoryTotals} total={summary.expense} currency={selectedCurrency} /><div className="grid gap-3">{categoryTotals.map(({ category, total }, index) => { const percentage = summary.expense ? total / summary.expense * 100 : 0; return <div key={category.id} className="flex items-center gap-3"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: categoryColors[index % categoryColors.length] }} /><span className="text-lg" aria-hidden="true">{category.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{category.name}</p><p className="mt-0.5 text-xs text-muted">{percentage.toFixed(percentage >= 10 ? 0 : 1)}%</p></div><p className="shrink-0 text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></div>; })}</div></div>}</Card>
+        <Card className="p-5">{categoryTotals.length === 0 ? <EmptyState icon={<PieChartIcon size={24} />} title="No Expense Data" body={`No ${selectedCurrency} expenses match this scope and date filter.`} /> : <div className="grid items-center gap-6 md:grid-cols-[230px_1fr]"><CategoryDonut items={categoryTotals} total={summary.expense} currency={selectedCurrency} /><div className="grid gap-3">{categoryTotals.map(({ category, total }, index) => { const percentage = summary.expense ? total / summary.expense * 100 : 0; return <div key={category.id} className="flex items-center gap-3"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: categoryColors[index % categoryColors.length] }} /><span className="text-lg" aria-hidden="true">{category.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{category.name}</p><p className="mt-0.5 text-xs text-muted">{formatPercentage(percentage)}</p></div><p className="shrink-0 text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></div>; })}</div></div>}</Card>
       </section>
 
       {dailyTotals.length > 0 && <section><h2 className="mb-3 text-lg font-extrabold">Daily expense by group</h2><Card className="divide-y divide-line overflow-hidden">{dailyTotals.map(({ group, total }) => { const count = expenses.filter((record) => record.groupId === group.id && !record.eventId).length; return <Link key={group.id} href={`/groups/${group.id}`} className="flex items-center gap-3 p-4 hover:bg-slate-50"><span className="grid size-10 place-items-center rounded-xl bg-brand-soft text-xl">{group.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{group.name}</p><p className="mt-0.5 text-xs text-muted">No event · {expenseCountLabel(count)}</p></div><p className="text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></Link>; })}</Card></section>}
@@ -127,7 +127,7 @@ function CategoryDonut({ items, total, currency }: { items: Array<{ category: Ca
     percentage: total ? categoryTotal / total * 100 : 0,
     offset: items.slice(0, index).reduce((sum, item) => sum + (total ? item.total / total * 100 : 0), 0),
   }));
-  return <div className="relative mx-auto grid size-52 place-items-center" role="img" aria-label={`Expense category pie chart totaling ${formatMoney(total, currency)}`}><svg viewBox="0 0 160 160" className="size-full -rotate-90" aria-hidden="true"><circle cx="80" cy="80" r="56" pathLength="100" fill="none" stroke="#F1F5F9" strokeWidth="24" />{segments.map(({ category, percentage, offset }, index) => <circle key={category.id} cx="80" cy="80" r="56" pathLength="100" fill="none" stroke={categoryColors[index % categoryColors.length]} strokeWidth="24" strokeDasharray={`${percentage} ${100 - percentage}`} strokeDashoffset={-offset} />)}</svg><div className="absolute inset-0 grid place-content-center text-center"><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.12em] text-muted">Expense</span><strong className="mt-1 text-lg tracking-tight text-ink">{formatMoney(total, currency)}</strong></div></div>;
+  return <div className="relative mx-auto grid size-52 place-items-center" role="img" aria-label={`Expense category pie chart totaling ${formatMoney(total, currency)}`}><svg viewBox="0 0 160 160" className="size-full -rotate-90" aria-hidden="true"><circle cx="80" cy="80" r="56" pathLength="100" fill="none" stroke="var(--color-chart-track)" strokeWidth="24" />{segments.map(({ category, percentage, offset }, index) => <circle key={category.id} cx="80" cy="80" r="56" pathLength="100" fill="none" stroke={categoryColors[index % categoryColors.length]} strokeWidth="24" strokeDasharray={`${percentage} ${100 - percentage}`} strokeDashoffset={-offset} />)}</svg><div className="absolute inset-0 grid place-content-center text-center"><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.12em] text-muted">Expense</span><strong className="mt-1 text-lg tracking-tight text-ink">{formatMoney(total, currency)}</strong></div></div>;
 }
 
 function dateRangeLabel(preset: InsightDatePreset, start?: string, end?: string) {
@@ -148,4 +148,11 @@ function formatDate(date: string) {
 
 function expenseCountLabel(count: number) {
   return `${count} expense${count === 1 ? "" : "s"}`;
+}
+
+function formatPercentage(value: number) {
+  return new Intl.NumberFormat("en-CA", {
+    style: "percent",
+    maximumFractionDigits: value >= 10 ? 0 : 1,
+  }).format(value / 100);
 }
