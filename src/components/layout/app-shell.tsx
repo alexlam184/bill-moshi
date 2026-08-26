@@ -10,6 +10,7 @@ import {
   Menu,
   Plus,
   ReceiptText,
+  RefreshCw,
   Settings2,
   UserRound,
   X,
@@ -37,7 +38,7 @@ function navigationActive(pathname: string, href: string) {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { snapshot, selectedGroupId, personalContext, selectGroup, selectPersonal, isOnline, pendingCount } = useBillMoshi();
+  const { snapshot, selectedGroupId, personalContext, selectGroup, selectPersonal, isOnline, pendingCount, syncing } = useBillMoshi();
   const [menuOpen, setMenuOpen] = useState(false);
   const groupIdFromPath = pathname.match(/^\/groups\/([^/]+)/)?.[1];
   const eventIdFromPath = pathname.match(/^\/events\/([^/]+)/)?.[1];
@@ -99,7 +100,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         {!focusedFlow && <header className="safe-top-header sticky top-0 z-30 grid grid-cols-[44px_1fr_70px] items-center border-b border-line bg-white/95 px-3 backdrop-blur lg:hidden">
           <button type="button" onClick={() => setMenuOpen(true)} className="motion-press grid size-11 place-items-center rounded-xl text-ink transition-colors hover:bg-slate-100" aria-label="Open group menu"><Menu size={23} /></button>
           <Link href={personalSelected ? "/records/mine" : selectedGroup ? `/groups/${selectedGroup.id}` : "/"} className="flex min-h-11 min-w-0 flex-col items-center justify-center px-2 text-center"><span className="block w-full truncate text-sm font-extrabold tracking-tight">{personalSelected ? "👤 Myself" : selectedGroup ? `${selectedGroup.emoji} ${selectedGroup.name}` : "Bill Moshi"}</span><span className="block text-[0.62rem] font-bold uppercase tracking-[0.12em] text-muted">{personalSelected ? "Personal expenses" : selectedGroup ? "Current group" : "All groups"}</span></Link>
-          <span aria-live="polite" className={`justify-self-end rounded-full px-2 py-1 text-[0.62rem] font-extrabold ${isOnline ? pendingCount ? "bg-warning-soft text-warning" : "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{!isOnline ? "Offline" : pendingCount ? `${pendingCount} pending` : "Synced"}</span>
+          <span
+            aria-busy={syncing}
+            aria-live="polite"
+            className={`inline-flex min-w-0 items-center justify-self-end gap-1 rounded-full px-1.5 py-1 text-[0.62rem] font-extrabold ${!isOnline ? "bg-warning-soft text-warning" : syncing ? "bg-brand-soft text-brand-dark" : pendingCount ? "bg-warning-soft text-warning" : "bg-success-soft text-success"}`}
+          >
+            {syncing && <RefreshCw size={11} className="shrink-0 animate-spin" aria-hidden="true" />}
+            <span className="truncate">{!isOnline ? "Offline" : syncing ? "Syncing" : pendingCount ? `${pendingCount} pending` : "Synced"}</span>
+          </span>
         </header>}
 
         <main id="main-content" tabIndex={-1} className={expenseFlow || debtFlow ? "mx-auto min-h-dvh w-full p-0 md:max-w-[820px] md:px-8 md:py-8" : calendarFlow ? "mx-auto min-h-dvh w-full p-0 md:max-w-[980px] md:px-8 md:py-8" : "mx-auto min-h-[calc(100dvh-4rem)] w-full max-w-[820px] px-4 pb-28 pt-6 sm:px-7 md:min-h-dvh md:px-10 md:pb-12 md:pt-10"}>

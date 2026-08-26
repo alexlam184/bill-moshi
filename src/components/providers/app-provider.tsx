@@ -7,11 +7,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { allocateSplits, roundMoney, type SplitInput } from "@/lib/domain/calculations";
 import { deleteGroupData, leaveGroupData } from "@/lib/domain/group-lifecycle";
+import { bindSnapshotIdentity } from "@/lib/domain/identity";
 import { seedSnapshot } from "@/lib/domain/seed";
 import type {
   AppSnapshot,
@@ -266,9 +268,14 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
   const [isOnline, setIsOnline] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const [autoSyncPaused, setAutoSyncPaused] = useState(false);
+  const syncInFlightRef = useRef(false);
+  const quotaBackoffUntilRef = useRef(0);
+  const quotaBackoffAttemptRef = useRef(0);
+  const quotaRetryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [syncMessage, setSyncMessage] = useState("Saved on this device");
   const [lastSyncAt, setLastSyncAt] = useState<string>();
-  const googleConnected = status === "authenticated";
+  const googleConnected = status === "authenticated" && Boolean(session?.accessToken);
 
   const refreshPending = useCallback(async () => {
     setPendingCount((await listPendingOperations()).length);
@@ -317,16 +324,15 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     const email = session.user.email;
     const name = session.user.name || email.split("@")[0];
     const image = session.user.image ?? undefined;
-    queueMicrotask(() => setSnapshot((current) => ({
-        ...current,
-        currentUser: {
-          id: `google:${email.toLowerCase()}`,
-          name,
-          email,
-          image,
-          defaultCurrency: current.currentUser.defaultCurrency,
-        },
-      })));
+    const googleUserId = `google:${email.toLowerCase()}`;
+    queueMicrotask(() => setSnapshot((current) => {
+      const sourceUserId = !current.currentUser.id.startsWith("google:")
+        ? current.currentUser.id
+        : current.groups.some((group) => group.ownerId === seedSnapshot.currentUser.id)
+          ? seedSnapshot.currentUser.id
+          : undefined;
+      return bindSnapshotIdentity(current, { id: googleUserId, name, email, image }, sourceUserId);
+    }));
   }, [session?.user?.email, session?.user?.image, session?.user?.name, status]);
 
   useEffect(() => {
@@ -340,6 +346,10 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => () => {
+    if (quotaRetryTimerRef.current) clearTimeout(quotaRetryTimerRef.current);
+  }, []);
+
   const enqueue = useCallback(async (operation: Omit<PendingOperation, "id" | "createdAt" | "attempts" | "status" | "idempotencyKey">) => {
     const operationId = id("operation");
     await queueOperation({
@@ -350,6 +360,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       attempts: 0,
       status: "pending",
     });
+    setAutoSyncPaused(false);
     await refreshPending();
   }, [refreshPending]);
 
@@ -886,19 +897,26 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
   }, [enqueue, snapshot.currentUser.id, snapshot.events, snapshot.groups, snapshot.joinRequests]);
 
   const syncNow = useCallback(async () => {
-    if (syncing) return;
-    if (!navigator.onLine) {
-      setSyncMessage("Offline — changes are safe on this device");
-      return;
-    }
-    const operations = (await listPendingOperations()).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
-    if (!googleConnected) {
-      setSyncMessage(operations.length === 0 ? "Saved on this device" : `${operations.length} change${operations.length === 1 ? "" : "s"} saved locally — connect Google to sync`);
-      return;
-    }
-    setSyncing(true);
-    setSyncMessage("Syncing with Google Drive…");
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
+    let operations: PendingOperation[] = [];
     try {
+      if (!navigator.onLine) {
+        setSyncMessage("Offline — changes are safe on this device");
+        return;
+      }
+      const quotaWaitMs = quotaBackoffUntilRef.current - Date.now();
+      if (quotaWaitMs > 0) {
+        setSyncMessage(`Google Sheets is cooling down — retrying in ${Math.ceil(quotaWaitMs / 1000)} seconds`);
+        return;
+      }
+      operations = (await listPendingOperations()).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+      if (!googleConnected) {
+        setSyncMessage(operations.length === 0 ? "Saved on this device" : `${operations.length} change${operations.length === 1 ? "" : "s"} saved locally — connect Google to sync`);
+        return;
+      }
+      setSyncing(true);
+      setSyncMessage("Syncing with Google Drive…");
       const uploadedDebtPhotos = new Map<string, string>();
       for (const pending of operations) {
         if (pending.entityType !== "debt_record") continue;
@@ -986,8 +1004,23 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
         setSnapshot((current) => ({ ...current, expenses: current.expenses.map((item) => item.id === operation.entityId ? { ...item, receiptFileId: fileId } : item) }));
       }
       const response = await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operations, snapshot }) });
-      const result = (await response.json()) as { syncedOperationIds?: string[]; error?: string };
-      if (!response.ok || !result.syncedOperationIds) throw new Error(result.error ?? "Google sync failed.");
+      const result = (await response.json()) as { syncedOperationIds?: string[]; error?: string; retryAfterSeconds?: number };
+      if (!response.ok || !result.syncedOperationIds) {
+        if (response.status === 429) {
+          const retryAfterSeconds = Number.isFinite(result.retryAfterSeconds) ? Math.max(result.retryAfterSeconds ?? 60, 60) : 60;
+          const backoffSeconds = Math.min(retryAfterSeconds * (2 ** quotaBackoffAttemptRef.current), 15 * 60);
+          quotaBackoffAttemptRef.current += 1;
+          quotaBackoffUntilRef.current = Date.now() + backoffSeconds * 1000;
+          if (quotaRetryTimerRef.current) clearTimeout(quotaRetryTimerRef.current);
+          quotaRetryTimerRef.current = setTimeout(() => {
+            quotaRetryTimerRef.current = undefined;
+            quotaBackoffUntilRef.current = 0;
+            setAutoSyncPaused(false);
+            setSyncMessage("Retrying Google sync…");
+          }, backoffSeconds * 1000);
+        }
+        throw new Error(result.error ?? "Google sync failed.");
+      }
       await removePendingOperations(result.syncedOperationIds);
       setSnapshot((current) => ({
         ...current,
@@ -996,6 +1029,13 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
         settlements: current.settlements.map((item) => result.syncedOperationIds?.some((operationId) => operations.find((operation) => operation.id === operationId)?.entityId === item.id) ? { ...item, syncStatus: "synced" } : item),
       }));
       await refreshPending();
+      quotaBackoffUntilRef.current = 0;
+      quotaBackoffAttemptRef.current = 0;
+      if (quotaRetryTimerRef.current) {
+        clearTimeout(quotaRetryTimerRef.current);
+        quotaRetryTimerRef.current = undefined;
+      }
+      setAutoSyncPaused(false);
       const completedAt = new Date().toISOString();
       setLastSyncAt(completedAt);
       setSyncMessage("Synced with Google Drive");
@@ -1003,25 +1043,34 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       for (const operation of operations) {
         await updatePendingOperation({ ...operation, status: "failed", attempts: operation.attempts + 1, lastError: error instanceof Error ? error.message : "Sync failed" });
       }
+      setAutoSyncPaused(true);
       setSyncMessage(error instanceof Error ? error.message : "Sync failed — your local changes are safe");
     } finally {
+      syncInFlightRef.current = false;
       setSyncing(false);
     }
-  }, [googleConnected, refreshPending, snapshot, syncing]);
+  }, [googleConnected, refreshPending, snapshot]);
 
   useEffect(() => {
-    if (isOnline && googleConnected && hydrated && pendingCount > 0) {
+    if (isOnline && googleConnected && hydrated && pendingCount > 0 && !syncing && !autoSyncPaused) {
       queueMicrotask(() => void syncNow());
     }
-  }, [googleConnected, hydrated, isOnline, pendingCount, syncNow]);
+  }, [autoSyncPaused, googleConnected, hydrated, isOnline, pendingCount, syncing, syncNow]);
 
   const resetDemo = useCallback(async () => {
     await clearLocalData();
+    quotaBackoffUntilRef.current = 0;
+    quotaBackoffAttemptRef.current = 0;
+    if (quotaRetryTimerRef.current) {
+      clearTimeout(quotaRetryTimerRef.current);
+      quotaRetryTimerRef.current = undefined;
+    }
     setSnapshot(seedSnapshot);
     setSelectedGroupId(undefined);
     setPersonalContext(false);
     localStorage.removeItem(SELECTED_CONTEXT_KEY);
     setPendingCount(0);
+    setAutoSyncPaused(false);
     setSyncMessage("Demo data restored");
     await saveSnapshot(seedSnapshot);
   }, []);
