@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PendingOperation } from "@/lib/domain/types";
-import { operationWorkspaceScope } from "./workspace-routing";
+import { deletedGroupIdsInBatch, operationWorkspaceScope, partitionOperationsForDeletedGroups } from "./workspace-routing";
 
 function operation(input: Partial<PendingOperation> & Pick<PendingOperation, "entityType" | "payload">): PendingOperation {
   return {
@@ -32,7 +32,63 @@ describe("operationWorkspaceScope", () => {
     expect(operationWorkspaceScope(operation({ entityType: "settlement", payload: { groupId: "group-roommates" } }))).toEqual({ kind: "group", groupId: "group-roommates" });
   });
 
+  it("routes legacy settlements through their referenced event", () => {
+    const eventGroupIds = new Map([["event-toronto", "group-family"]]);
+    const legacySettlement = operation({
+      entityType: "settlement",
+      entityId: "settlement-legacy",
+      payload: {
+        settlement: {
+          events: [{ eventId: "event-toronto", allocatedAmount: 50 }],
+        },
+      },
+    });
+
+    expect(operationWorkspaceScope(legacySettlement, eventGroupIds)).toEqual({
+      kind: "group",
+      groupId: "group-family",
+    });
+  });
+
+  it("rejects a settlement that references events from different Groups", () => {
+    const eventGroupIds = new Map([
+      ["event-family", "group-family"],
+      ["event-roommates", "group-roommates"],
+    ]);
+    const invalidSettlement = operation({
+      entityType: "settlement",
+      entityId: "settlement-invalid",
+      payload: {
+        settlement: {
+          events: [{ eventId: "event-family" }, { eventId: "event-roommates" }],
+        },
+      },
+    });
+
+    expect(() => operationWorkspaceScope(invalidSettlement, eventGroupIds)).toThrow(/multiple Groups/);
+  });
+
   it("fails closed when a Group-scoped operation has no Group identity", () => {
     expect(() => operationWorkspaceScope(operation({ entityType: "settlement", payload: {} }))).toThrow(/cannot determine the Group/);
+  });
+
+  it("identifies groups whose final queued state is deleted", () => {
+    const operations = [
+      operation({ entityType: "invitation", payload: { invitation: { groupId: "group-roommates" } } }),
+      operation({ entityType: "group", entityId: "group-roommates", action: "delete", payload: { groupId: "group-roommates" } }),
+    ];
+
+    expect([...deletedGroupIdsInBatch(operations)]).toEqual(["group-roommates"]);
+  });
+
+  it("discards stale writes before syncing a deleted group", () => {
+    const staleInvitation = operation({ id: "invite-op", entityType: "invitation", payload: { invitation: { groupId: "group-roommates" } } });
+    const groupDelete = operation({ id: "delete-op", entityType: "group", entityId: "group-roommates", action: "delete", payload: { groupId: "group-roommates" } });
+    const personalDebt = operation({ id: "debt-op", entityType: "debt_record", payload: {} });
+
+    expect(partitionOperationsForDeletedGroups([staleInvitation, groupDelete, personalDebt])).toEqual({
+      active: [groupDelete, personalDebt],
+      discardedOperationIds: ["invite-op"],
+    });
   });
 });

@@ -1,9 +1,13 @@
 import { auth } from "@/auth";
 import type { AppSnapshot, PendingOperation } from "@/lib/domain/types";
-import { GoogleWorkspaceAdapter } from "@/lib/integrations/google/server";
+import { GoogleApiRequestError, GoogleWorkspaceAccessError, GoogleWorkspaceAdapter } from "@/lib/integrations/google/server";
+import { partitionOperationsForDeletedGroups } from "@/lib/integrations/google/workspace-routing";
 
 export async function POST(request: Request) {
   const session = await auth();
+  if (session?.authError === "RefreshAccessTokenError") {
+    return Response.json({ error: "Google authorization expired. Reconnect Google to continue syncing." }, { status: 401 });
+  }
   if (!session?.accessToken) {
     return Response.json({ error: "Google Drive is not connected." }, { status: 401 });
   }
@@ -13,8 +17,45 @@ export async function POST(request: Request) {
   }
   try {
     const adapter = new GoogleWorkspaceAdapter(session.accessToken, session.user?.email ?? undefined);
-    return Response.json(await adapter.applyOperations(body.operations, body.snapshot));
+    const eventGroupIds = new Map(
+      (body.snapshot?.events ?? []).map((event) => [event.id, event.groupId]),
+    );
+    const { active, discardedOperationIds } = partitionOperationsForDeletedGroups(
+      body.operations,
+      eventGroupIds,
+    );
+    const result = await adapter.applyOperations(active, body.snapshot);
+    return Response.json({
+      ...result,
+      syncedOperationIds: [...discardedOperationIds, ...result.syncedOperationIds],
+    });
   } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error([
+        "Bill Moshi Google sync failed",
+        `name=${error instanceof Error ? error.name : "UnknownError"}`,
+        `providerStatus=${error instanceof GoogleApiRequestError ? error.status : "unknown"}`,
+        `message=${error instanceof Error ? error.message : "Google sync failed."}`,
+      ].join(" | "));
+    }
+    if (error instanceof GoogleWorkspaceAccessError) {
+      return Response.json({ error: error.message }, { status: 403 });
+    }
+    if (error instanceof GoogleApiRequestError && error.status === 401) {
+      return Response.json({ error: "Google authorization expired. Reconnect Google to continue syncing." }, { status: 401 });
+    }
+    if (error instanceof GoogleApiRequestError && error.status === 429) {
+      return Response.json(
+        {
+          error: "Google Sheets is temporarily rate-limited. Your changes are safe and sync will retry automatically.",
+          retryAfterSeconds: 60,
+        },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    }
+    if (error instanceof GoogleApiRequestError && error.status === 403) {
+      return Response.json({ error: error.message }, { status: 403 });
+    }
     return Response.json(
       { error: error instanceof Error ? error.message : "Google sync failed." },
       { status: 502 },

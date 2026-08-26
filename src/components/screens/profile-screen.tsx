@@ -26,8 +26,22 @@ export function ProfileScreen() {
         <label className="mt-4 grid gap-2 text-sm font-semibold"><span>Personal default</span><select aria-label="Default currency" name="default-currency" autoComplete="off" value={snapshot.currentUser.defaultCurrency} onChange={(event) => updateDefaultCurrency(event.target.value as CurrencyCode)} className="min-h-12 w-full rounded-xl border border-line bg-white px-3.5 text-base font-bold outline-none focus:border-brand focus:ring-4 focus:ring-brand-soft">{SUPPORTED_CURRENCIES.map((code) => <option key={code} value={code}>{currencyName(code)}</option>)}</select></label>
       </Card>
       <Card className="overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-line p-5"><span className={`grid size-11 place-items-center rounded-xl ${googleConnected ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{googleConnected ? <Cloud size={21} /> : <CloudOff size={21} />}</span><div className="min-w-0 flex-1"><h2 className="font-extrabold">Google Drive & Sheets</h2><p className="mt-0.5 text-xs text-muted">{googleConnected ? "Connected to your Google account" : "Local demo storage only"}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-extrabold ${googleConnected ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{googleConnected ? "Connected" : "Not connected"}</span></div>
-        <div className="grid gap-3 p-5"><div aria-live="polite" className="flex items-center gap-3 rounded-xl bg-slate-50 p-3"><Database size={18} className="text-brand-dark" /><div className="min-w-0 flex-1"><p className="text-sm font-bold">Sync Status</p><p className="truncate text-xs text-muted">{syncMessage}</p></div>{pendingCount > 0 && <span className="text-xs font-extrabold text-warning">{pendingCount} pending</span>}</div>{googleConnected ? <Button type="button" onClick={() => void syncNow()} disabled={syncing}><RefreshCw className={syncing ? "animate-spin" : ""} size={17} />{syncing ? "Syncing…" : "Sync Now"}</Button> : <Button type="button" onClick={() => void signIn("google", { redirectTo: "/settings" })}><LogIn size={17} /> Connect Google</Button>}</div>
+        <div className="flex items-center gap-3 border-b border-line p-5">
+          <span className={`grid size-11 shrink-0 place-items-center rounded-xl ${googleConnected ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{googleConnected ? <Cloud size={21} /> : <CloudOff size={21} />}</span>
+          <div className="min-w-0 flex-1"><h2 className="font-extrabold">Google Drive & Sheets</h2><p className="mt-0.5 text-xs text-muted">{googleConnected ? "Connected to your Google account" : "Local demo storage only"}</p></div>
+          <span className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-extrabold ${googleConnected ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{googleConnected ? "Connected" : "Not connected"}</span>
+        </div>
+        <div className="grid gap-3 p-5">
+          <div aria-live="polite" role="status" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+            <Database size={18} className="mt-0.5 shrink-0 text-brand-dark sm:mt-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold">Sync Status</p>
+              <p className="mt-0.5 max-w-full whitespace-normal break-words text-xs leading-5 text-muted [overflow-wrap:anywhere]">{syncMessage}</p>
+            </div>
+            {pendingCount > 0 && <span className="col-start-2 w-fit shrink-0 whitespace-nowrap rounded-full bg-warning-soft px-2 py-1 text-xs font-extrabold text-warning sm:col-start-auto">{pendingCount} pending</span>}
+          </div>
+          {googleConnected ? <Button type="button" onClick={() => void syncNow()} disabled={syncing}><RefreshCw className={syncing ? "animate-spin" : ""} size={17} />{syncing ? "Syncing…" : "Sync Now"}</Button> : <Button type="button" onClick={() => void signIn("google", { redirectTo: "/settings" })}><LogIn size={17} /> Connect Google</Button>}
+        </div>
       </Card>
       <Card className="p-5">
         <h2 className="font-extrabold">Google Drive layout</h2>

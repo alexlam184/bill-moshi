@@ -1,10 +1,13 @@
 import { auth } from "@/auth";
-import { GoogleWorkspaceAdapter } from "@/lib/integrations/google/server";
+import { GoogleApiRequestError, GoogleWorkspaceAccessError, GoogleWorkspaceAdapter } from "@/lib/integrations/google/server";
 
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
 
 export async function POST(request: Request) {
   const session = await auth();
+  if (session?.authError === "RefreshAccessTokenError") {
+    return Response.json({ error: "Google authorization expired. Reconnect Google to upload receipts." }, { status: 401 });
+  }
   if (!session?.accessToken) return Response.json({ error: "Google Drive is not connected." }, { status: 401 });
   const form = await request.formData();
   const file = form.get("file");
@@ -23,6 +26,15 @@ export async function POST(request: Request) {
     const fileId = await adapter.uploadReceipt({ scope, groupId, groupName, canCreateGroupWorkspace, recordId, recordType, eventName, fileName: file.name, bytes: await file.arrayBuffer(), mimeType: file.type });
     return Response.json({ fileId });
   } catch (error) {
+    if (error instanceof GoogleWorkspaceAccessError) {
+      return Response.json({ error: error.message }, { status: 403 });
+    }
+    if (error instanceof GoogleApiRequestError && error.status === 401) {
+      return Response.json({ error: "Google authorization expired. Reconnect Google to upload receipts." }, { status: 401 });
+    }
+    if (error instanceof GoogleApiRequestError && error.status === 403) {
+      return Response.json({ error: error.message }, { status: 403 });
+    }
     return Response.json({ error: error instanceof Error ? error.message : "Receipt upload failed." }, { status: 502 });
   }
 }
