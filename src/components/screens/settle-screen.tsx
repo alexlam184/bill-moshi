@@ -34,7 +34,7 @@ export function SettleScreen({ initialEventId }: { initialEventId?: string }) {
     const fromMember = snapshot.members.find((member) => member.eventId === event.id && member.userId === fromUserId);
     const toMember = snapshot.members.find((member) => member.eventId === event.id && member.userId === toUserId);
     if (!fromMember || !toMember) return { event, outstanding: 0 };
-    const balances = eventNetBalances(event.id, snapshot.members, snapshot.expenses, snapshot.settlements);
+    const balances = eventNetBalances(event.id, snapshot.members, snapshot.records, snapshot.settlements);
     return { event, outstanding: Math.max(0, Math.min(-(balances.get(fromMember.id) ?? 0), balances.get(toMember.id) ?? 0)) };
   });
   const suggested = roundMoney(outstandingByEvent.reduce((sum, item) => sum + item.outstanding, 0), currency);

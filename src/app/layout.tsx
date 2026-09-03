@@ -39,11 +39,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geist.variable} ${bricolage.variable} antialiased`}>
       <head>
-        {process.env.NODE_ENV === "development" ? (
-          <Script id="ignore-injected-wallet-error" strategy="beforeInteractive">
-            {injectedWalletErrorGuard}
-          </Script>
-        ) : null}
+        <Script id="ignore-injected-wallet-error" strategy="beforeInteractive">
+          {injectedWalletErrorGuard}
+        </Script>
       </head>
       <body suppressHydrationWarning>
         <Providers>

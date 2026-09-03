@@ -1,5 +1,5 @@
-const CACHE = "bill-moshi-v1";
-const APP_SHELL = ["/", "/records", "/insights", "/settings", "/events", "/offline", "/icon.svg"];
+const CACHE = "bill-moshi-v3";
+const APP_SHELL = ["/offline", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
@@ -12,15 +12,15 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) return;
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith("/api/") || url.searchParams.has("_rsc")) return;
   if (event.request.mode === "navigate") {
-    event.respondWith(fetch(event.request).then((response) => {
-      const copy = response.clone();
-      caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-      return response;
-    }).catch(async () => (await caches.match(event.request)) || (await caches.match("/offline"))));
+    event.respondWith(fetch(event.request).catch(async () => (await caches.match("/offline")) || Response.error()));
     return;
   }
+  const staticDestination = ["font", "image", "manifest", "script", "style"].includes(event.request.destination);
+  if (!staticDestination && !url.pathname.startsWith("/_next/static/")) return;
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
     if (response.ok) caches.open(CACHE).then((cache) => cache.put(event.request, response.clone()));
     return response;

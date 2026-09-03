@@ -24,7 +24,10 @@ export function useDialogFocus<T extends HTMLElement>(onClose: () => void, activ
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const surface = surfaceRef.current;
-    const frame = requestAnimationFrame(() => surface?.querySelector<HTMLElement>(FOCUSABLE)?.focus());
+    const frame = requestAnimationFrame(() => {
+      const initial = surface?.querySelector<HTMLElement>("[data-dialog-initial-focus]") ?? surface?.querySelector<HTMLElement>(FOCUSABLE);
+      initial?.focus();
+    });
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {

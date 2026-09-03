@@ -1,11 +1,15 @@
 import "server-only";
+import type { RecurringPayment } from "@/lib/domain/types";
 
 import { createHash } from "node:crypto";
-import type { AppSnapshot, BillEvent, Category, DebtRecord, EventMember, Expense, Group, GroupInvitation, GroupMember, JoinRequest, PendingOperation, Settlement } from "@/lib/domain/types";
+import { authoritativeGroupOwner, confirmedGroupDeletions, markGroupDeleted, markOwnedGroupsDeleted } from "../../collaboration/store";
+import { recordSyncFingerprint } from "../../domain/sync-conflicts";
+import type { AppSnapshot, BillEvent, Category, DebtRecord, EventMember, LedgerRecord, RecordSyncConflict, Group, GroupInvitation, GroupMember, JoinRequest, MemberRole, PendingOperation, Settlement } from "@/lib/domain/types";
 import { googleApiErrorMessage } from "./api-error";
-import type { GoogleScopedWorkspaceState, GoogleWorkspacePort, SyncResult } from "./contracts";
+import type { GoogleScopedWorkspaceState, GoogleWorkspacePort, RemoteGroupState, SyncResult } from "./contracts";
 import { driveFilesListUrl, driveGroupFolderQuery } from "./drive-query";
 import { GROUP_SHEET_HEADERS, PERSONAL_SHEET_HEADERS, type ScopedSheetHeaders, type SheetName } from "./sheet-schema";
+import { recordFromSheetRows } from "./sheet-record";
 import { withGoogleWorkspaceAccountLock } from "./workspace-lock";
 import { deletedGroupIdsInBatch, operationWorkspaceScope } from "./workspace-routing";
 
@@ -44,6 +48,15 @@ export class GoogleWorkspaceAccessError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GoogleWorkspaceAccessError";
+  }
+}
+
+export class GoogleRootFolderConfirmationRequiredError extends Error {
+  readonly code = "GOOGLE_ROOT_FOLDER_CREATION_REQUIRED";
+
+  constructor() {
+    super("No Bill Moshi folder was found in Google Drive. Confirm folder creation to continue syncing.");
+    this.name = "GoogleRootFolderConfirmationRequiredError";
   }
 }
 
@@ -136,7 +149,7 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     );
   }
 
-  private async ensureRootFolder() {
+  private async ensureRootFolder(allowCreation = false) {
     const rootQuery = "trashed = false and mimeType = 'application/vnd.google-apps.folder' and appProperties has { key='billMoshiRoot' and value='true' }";
     let candidates = await this.files(
       rootQuery,
@@ -153,6 +166,7 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
 
     let folder = await this.canonicalRootFolder(candidates);
     if (!folder) {
+      if (!allowCreation) throw new GoogleRootFolderConfirmationRequiredError();
       const created = await this.createFolder("Bill Moshi", undefined, {
         billMoshiRoot: "true",
         billMoshiSchemaVersion: "2",
@@ -232,10 +246,11 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
   }
 
   private async configureWorkbook(spreadsheetId: string, headers: ScopedSheetHeaders) {
-    const workbook = await this.request<{ sheets?: Array<{ properties: { title: string } }> }>(
-      `${SHEETS_API}/spreadsheets/${spreadsheetId}?fields=sheets.properties(title)`,
+    const workbook = await this.request<{ sheets?: Array<{ properties: { title: string; sheetId: number } }> }>(
+      `${SHEETS_API}/spreadsheets/${spreadsheetId}?fields=sheets.properties(title,sheetId)`,
     );
-    const existingTitles = new Set((workbook.sheets ?? []).map((sheet) => sheet.properties.title));
+    const existingSheets = workbook.sheets ?? [];
+    const existingTitles = new Set(existingSheets.map((sheet) => sheet.properties.title));
     const missingTitles = Object.keys(headers).filter((title) => !existingTitles.has(title));
     if (missingTitles.length > 0) {
       await this.request(`${SHEETS_API}/spreadsheets/${spreadsheetId}:batchUpdate`, {
@@ -276,6 +291,7 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
           body: JSON.stringify({
             appProperties: {
               ...existing.appProperties,
+              billMoshiSchemaVersion: "3",
               billMoshiHeaderSignature: headerSignature,
             },
           }),
@@ -293,13 +309,13 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     });
     await this.request(`${DRIVE_API}/files/${workbook.spreadsheetId}?fields=id,parents,appProperties`, {
       method: "PATCH",
-      body: JSON.stringify({ appProperties: { billMoshiData: "true", billMoshiSchemaVersion: "2", ...appProperties } }),
+      body: JSON.stringify({ appProperties: { billMoshiData: "true", billMoshiSchemaVersion: "3", ...appProperties } }),
     });
     await this.moveFile(workbook.spreadsheetId, folderId);
     await this.writeWorkbookHeaders(workbook.spreadsheetId, headers);
     await this.request(`${DRIVE_API}/files/${workbook.spreadsheetId}?fields=id,appProperties`, {
       method: "PATCH",
-      body: JSON.stringify({ appProperties: { billMoshiData: "true", billMoshiSchemaVersion: "2", billMoshiHeaderSignature: headerSignature, ...appProperties } }),
+      body: JSON.stringify({ appProperties: { billMoshiData: "true", billMoshiSchemaVersion: "3", billMoshiHeaderSignature: headerSignature, ...appProperties } }),
     });
     return { spreadsheetId: workbook.spreadsheetId, created: true, needsSeed: true };
   }
@@ -307,7 +323,7 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
   private async ensurePersonalWorkspace(rootFolderId: string): Promise<EnsuredWorkspace> {
     const folder = await this.ensureChildFolder(rootFolderId, "Personal", "billMoshiWorkspaceType", "personal", {
       billMoshiWorkspaceType: "personal",
-      billMoshiSchemaVersion: "2",
+      billMoshiSchemaVersion: "3",
     });
     const uploads = await this.ensureChildFolder(folder.file.id, "Uploads", "billMoshiUploads", "true", {
       billMoshiUploads: "true",
@@ -344,6 +360,15 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
 
   private async findGroupFolder(groupId: string) {
     return this.canonicalGroupFolder(await this.groupFolders(groupId));
+  }
+
+  private async openGroupWorkspace(groupId: string): Promise<EnsuredWorkspace | undefined> {
+    const folder = await this.findGroupFolder(groupId);
+    if (!folder) return undefined;
+    const workbook = (await this.files(`'${folder.id}' in parents and trashed = false and appProperties has { key='billMoshiData' and value='true' }`))[0];
+    if (!workbook) throw new GoogleWorkspaceAccessError("The Group Data Sheet is missing or unavailable to this Google account.");
+    const uploads = (await this.files(`'${folder.id}' in parents and trashed = false and appProperties has { key='billMoshiUploads' and value='true' }`))[0];
+    return { kind: "group", groupId, folderId: folder.id, spreadsheetId: workbook.id, uploadsFolderId: uploads?.id ?? "", created: false, needsSeed: workbook.appProperties?.billMoshiSeeded !== "true" };
   }
 
   private async trashDuplicateGroupFolders(canonical: DriveFile, candidates: DriveFile[]) {
@@ -473,6 +498,26 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     return rows;
   }
 
+  private async prefetchSheets(spreadsheetId: string, sheets: readonly SheetName[]) {
+    const missing = sheets.filter((sheet) => !this.sheetRowsCache.has(`${spreadsheetId}:${sheet}`));
+    if (missing.length === 0) return;
+    const search = new URLSearchParams({ majorDimension: "ROWS" });
+    for (const sheet of missing) search.append("ranges", `'${sheet}'!A:ZZ`);
+    const batch = this.request<{ valueRanges?: Array<{ values?: unknown[][] }> }>(
+      `${SHEETS_API}/spreadsheets/${spreadsheetId}/values:batchGet?${search.toString()}`,
+    );
+    const reads = missing.map((sheet, index) => {
+      const cacheKey = `${spreadsheetId}:${sheet}`;
+      const rows = batch.then((result) => result.valueRanges?.[index]?.values ?? []).catch((error) => {
+        this.sheetRowsCache.delete(cacheKey);
+        throw error;
+      });
+      this.sheetRowsCache.set(cacheKey, rows);
+      return rows;
+    });
+    await Promise.all(reads);
+  }
+
   private async upsert(spreadsheetId: string, sheet: SheetName, row: unknown[], keyColumns = 1) {
     const rows = await this.sheetRows(spreadsheetId, sheet);
     const index = rows.findIndex((candidate, rowIndex) => rowIndex > 0 && candidate.slice(0, keyColumns).every((value, column) => String(value) === String(row[column])));
@@ -524,35 +569,108 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     }
   }
 
-  private async writeExpense(spreadsheetId: string, expense: Expense, category?: Category) {
-    await this.upsert(spreadsheetId, "Expenses", [expense.id, expense.groupId ?? "", expense.eventId ?? "", expense.description, expense.categoryId, expense.transactionDate, expense.payerId, expense.amountOriginal, expense.currencyOriginal, expense.exchangeRate, expense.amountBase, expense.baseCurrency, expense.receiptFileId ?? "", expense.notes ?? "", expense.createdBy, expense.createdAt, expense.updatedAt, expense.version, expense.recordType, expense.exchangeRateSource, expense.exchangeRateDate ?? "", expense.exchangeRateProvider ?? "", expense.reportingCurrency ?? "", expense.baseToReportingRate ?? "", expense.amountReporting ?? "", expense.reportingRateSource ?? "", expense.reportingRateDate ?? "", expense.reportingRateProvider ?? ""]);
-    for (const split of expense.splits) {
-      await this.upsert(spreadsheetId, "ExpenseSplits", [expense.id, split.memberId, split.splitMethod, split.owedAmount, split.percentage ?? "", split.shares ?? ""], 2);
+  private async writeRecord(spreadsheetId: string, record: LedgerRecord, category?: Category) {
+    await this.upsert(spreadsheetId, "Records", [record.id, record.groupId ?? "", record.eventId ?? "", record.description, record.categoryId, record.transactionDate, record.payerId, record.amountOriginal, record.currencyOriginal, record.exchangeRate, record.amountBase, record.baseCurrency, record.receiptFileId ?? "", record.notes ?? "", record.createdBy, record.createdAt, record.updatedAt, record.version, record.recordType, record.exchangeRateSource, record.exchangeRateDate ?? "", record.exchangeRateProvider ?? "", record.reportingCurrency ?? "", record.baseToReportingRate ?? "", record.amountReporting ?? "", record.reportingRateSource ?? "", record.reportingRateDate ?? "", record.reportingRateProvider ?? "", record.recurringPaymentId ?? "", record.recurringPaymentDate ?? ""]);
+    if (record.groupId) for (const split of record.splits) {
+      await this.upsert(spreadsheetId, "RecordSplits", [record.id, split.memberId, split.splitMethod, split.owedAmount, split.percentage ?? "", split.shares ?? ""], 2);
     }
     if (category) await this.upsert(spreadsheetId, "Categories", [category.id, category.name, category.emoji, category.isCustom, category.createdBy ?? ""]);
+  }
+
+  private async recordConflict(spreadsheetId: string, operation: PendingOperation, groupId: string, allowForce = false): Promise<RecordSyncConflict | undefined> {
+    if (operation.entityType !== "record") return undefined;
+    const payload = operation.payload as { record?: LedgerRecord; baseVersion?: number; baseFingerprint?: string; force?: boolean };
+    const rows = await this.sheetRows(spreadsheetId, "Records");
+    const row = rows.find((candidate, index) => index > 0 && String(candidate[0]) === operation.entityId);
+    const localVersion = payload.record?.version ?? payload.baseVersion ?? 0;
+    if (!row) {
+      if (payload.force && !allowForce) return { entityId: operation.entityId, groupId, localAction: operation.action, localVersion, remoteVersion: 0, reason: "owner-required" };
+      if (operation.action === "delete" || (payload.baseVersion ?? 0) === 0) return undefined;
+      return { entityId: operation.entityId, groupId, localAction: operation.action, localVersion, remoteVersion: 0, reason: "remote-deleted" };
+    }
+    const splitRows = await this.sheetRows(spreadsheetId, "RecordSplits");
+    const remoteRecord = recordFromSheetRows(row, splitRows);
+    if (!remoteRecord) return undefined;
+    if (payload.force) {
+      if (allowForce) return undefined;
+      return { entityId: operation.entityId, groupId, localAction: operation.action, localVersion, remoteVersion: remoteRecord.version, reason: "owner-required", remoteRecord };
+    }
+    const baseVersion = payload.baseVersion ?? (payload.record ? Math.max(0, payload.record.version - 1) : remoteRecord.version);
+    const remoteChanged = payload.baseFingerprint
+      ? recordSyncFingerprint(remoteRecord) !== payload.baseFingerprint
+      : remoteRecord.version > baseVersion || baseVersion === 0;
+    if (!remoteChanged) return undefined;
+    return { entityId: operation.entityId, groupId, localAction: operation.action, localVersion, remoteVersion: remoteRecord.version, reason: "remote-changed", remoteRecord };
+  }
+
+  private async groupRecords(workspace: GoogleScopedWorkspaceState): Promise<LedgerRecord[]> {
+    const rows = await this.sheetRows(workspace.spreadsheetId, "Records");
+    const splitRows = await this.sheetRows(workspace.spreadsheetId, "RecordSplits");
+    return rows.slice(1).flatMap((row) => {
+      const record = recordFromSheetRows(row, splitRows);
+      if (!record || record.groupId !== workspace.groupId) return [];
+      return [record];
+    });
+  }
+
+  private async groupState(workspace: GoogleScopedWorkspaceState): Promise<RemoteGroupState | undefined> {
+    const groupRows = await this.sheetRows(workspace.spreadsheetId, "Groups");
+    const row = groupRows.find((candidate, index) => index > 0 && String(candidate[0]) === workspace.groupId);
+    if (!row || !workspace.groupId) return undefined;
+    const group: Group = {
+      id: String(row[0]), name: String(row[1] ?? "Group"), emoji: String(row[2] ?? "👥"),
+      description: String(row[3] ?? "") || undefined, ownerId: String(row[4]),
+      createdAt: String(row[5]), updatedAt: String(row[6]), notes: String(row[7] ?? "") || undefined,
+      currency: String(row[8] ?? "CAD") as Group["currency"],
+    };
+    const groupMembers: GroupMember[] = (await this.sheetRows(workspace.spreadsheetId, "GroupMembers")).slice(1).flatMap((member) => String(member[1]) === group.id ? [{
+      id: String(member[0]), groupId: String(member[1]), userId: String(member[2]), name: String(member[3]), email: String(member[4]),
+      role: String(member[5]) as GroupMember["role"], status: String(member[6]) as GroupMember["status"], joinedAt: String(member[7]), avatarColor: "var(--color-avatar-brand)",
+    }] : []);
+    const events: BillEvent[] = (await this.sheetRows(workspace.spreadsheetId, "Events")).slice(1).flatMap((event) => String(event[1]) === group.id ? [{
+      id: String(event[0]), groupId: String(event[1]), name: String(event[2]), startDate: String(event[3] ?? "") || undefined,
+      endDate: String(event[4] ?? "") || undefined, baseCurrency: String(event[5]) as BillEvent["baseCurrency"], ownerId: String(event[6]),
+      createdAt: String(event[7]), updatedAt: String(event[8]), emoji: "📅", simplifyDebts: true,
+    }] : []);
+    const eventIds = new Set(events.map((event) => event.id));
+    const members: EventMember[] = (await this.sheetRows(workspace.spreadsheetId, "Members")).slice(1).flatMap((member) => eventIds.has(String(member[1])) ? [{
+      id: String(member[0]), eventId: String(member[1]), userId: String(member[2]), name: String(member[3]), email: String(member[4]),
+      role: String(member[5]) as EventMember["role"], joinedAt: String(member[6]), status: String(member[7]) as EventMember["status"], avatarColor: "var(--color-avatar-brand)",
+    }] : []);
+    const categories: Category[] = (await this.sheetRows(workspace.spreadsheetId, "Categories")).slice(1).flatMap((category) => category[0] ? [{
+      id: String(category[0]), name: String(category[1]), emoji: String(category[2]), isCustom: String(category[3]) === "true" || category[3] === true, createdBy: String(category[4] ?? "") || undefined,
+    }] : []);
+    return { group, groupMembers, events, members, categories };
   }
 
   private async applyOperation(spreadsheetId: string, operation: PendingOperation) {
     const payload = operation.payload as Record<string, unknown>;
     if (operation.action === "delete") {
       if (operation.entityType === "event") {
-        const expenseRows = await this.sheetRows(spreadsheetId, "Expenses");
-        const expenseIds = new Set(expenseRows.filter((row, index) => index > 0 && String(row[2]) === operation.entityId).map((row) => String(row[0])));
+        const recordRows = await this.sheetRows(spreadsheetId, "Records");
+        const recordIds = new Set(recordRows.filter((row, index) => index > 0 && String(row[2]) === operation.entityId).map((row) => String(row[0])));
         await this.clearByKey(spreadsheetId, "Events", operation.entityId);
         await this.clearByKey(spreadsheetId, "Members", operation.entityId, 1);
-        await this.clearByKey(spreadsheetId, "Expenses", operation.entityId, 2);
-        await this.clearByKeys(spreadsheetId, "ExpenseSplits", expenseIds);
+        await this.clearByKey(spreadsheetId, "Records", operation.entityId, 2);
+        await this.clearByKeys(spreadsheetId, "RecordSplits", recordIds);
         await this.clearByKey(spreadsheetId, "SettlementEvents", operation.entityId, 1);
-      } else if (operation.entityType === "expense") {
-        await this.clearByKey(spreadsheetId, "Expenses", operation.entityId);
-        await this.clearByKey(spreadsheetId, "ExpenseSplits", operation.entityId);
+      } else if (operation.entityType === "record") {
+        await this.clearByKey(spreadsheetId, "Records", operation.entityId);
+        const record = payload.record as LedgerRecord | undefined;
+        if (record?.groupId ?? payload.groupId) await this.clearByKey(spreadsheetId, "RecordSplits", operation.entityId);
       } else if (operation.entityType === "debt_record") {
         await this.clearByKey(spreadsheetId, "DebtRecords", operation.entityId);
       }
       return;
     }
 
-    if (operation.entityType === "user_settings") {
+    if (operation.entityType === "recurring_payment") {
+      const payment = payload.recurringPayment as RecurringPayment;
+      const rows = await this.sheetRows(spreadsheetId, "RecurringPayments");
+      const stored = rows.find((row) => row[0] === payment.id);
+      if (stored && Number(stored[15]) > payment.version) return;
+      await this.upsert(spreadsheetId, "RecurringPayments", [payment.id, payment.name, payment.categoryId, payment.amount, payment.currency, payment.startDate, payment.frequency, payment.interval, payment.endDate ?? "", payment.nextOccurrence, payment.status, payment.note ?? "", payment.createdBy, payment.createdAt, payment.updatedAt, payment.version]);
+    } else if (operation.entityType === "user_settings") {
       const settings = payload.settings as { userId: string; email: string; defaultCurrency: string; updatedAt: string };
       await this.upsert(spreadsheetId, "UserSettings", [settings.userId, settings.email, settings.defaultCurrency, settings.updatedAt]);
     } else if (operation.entityType === "group") {
@@ -570,10 +688,10 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
       const members = (payload.members as EventMember[] | undefined) ?? (payload.member ? [payload.member as EventMember] : []);
       await this.upsert(spreadsheetId, "Events", [event.id, event.groupId, event.name, event.startDate ?? "", event.endDate ?? "", event.baseCurrency, event.ownerId, event.createdAt, event.updatedAt]);
       for (const member of members) await this.upsert(spreadsheetId, "Members", [member.id, member.eventId, member.userId, member.name, member.email, member.role, member.joinedAt, member.status]);
-    } else if (operation.entityType === "expense") {
+    } else if (operation.entityType === "record") {
       const eventMembers = (payload.eventMembers as EventMember[] | undefined) ?? [];
       for (const member of eventMembers) await this.upsert(spreadsheetId, "Members", [member.id, member.eventId, member.userId, member.name, member.email, member.role, member.joinedAt, member.status]);
-      await this.writeExpense(spreadsheetId, payload.expense as Expense, payload.category as Category | undefined);
+      await this.writeRecord(spreadsheetId, payload.record as LedgerRecord, payload.category as Category | undefined);
     } else if (operation.entityType === "debt_record") {
       const debtRecord = payload.debtRecord as DebtRecord;
       await this.upsert(spreadsheetId, "DebtRecords", [debtRecord.id, debtRecord.direction, debtRecord.personName, debtRecord.amount, debtRecord.currency, debtRecord.date, debtRecord.dueDate ?? "", debtRecord.note ?? "", debtRecord.status, debtRecord.createdBy, debtRecord.createdAt, debtRecord.updatedAt, debtRecord.name ?? "", JSON.stringify(Object.values(debtRecord.photoFileIds ?? {})), JSON.stringify(debtRecord.photoNames ?? [])]);
@@ -607,12 +725,13 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
       settings: { userId: snapshot.currentUser.id, email: snapshot.currentUser.email, defaultCurrency: snapshot.currentUser.defaultCurrency, updatedAt: new Date().toISOString() },
     }));
     for (const category of snapshot.categories) await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("category", category.id, { category }));
-    for (const expense of snapshot.expenses.filter((item) => !item.groupId)) {
-      const category = snapshot.categories.find((item) => item.id === expense.categoryId);
-      await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("expense", expense.id, { expense, category }));
-      await this.moveHistoricalReceipt(expense, workspace.uploadsFolderId);
+    for (const record of snapshot.records.filter((item) => !item.groupId)) {
+      const category = snapshot.categories.find((item) => item.id === record.categoryId);
+      await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("record", record.id, { record, category }));
+      await this.moveHistoricalReceipt(record, workspace.uploadsFolderId);
     }
     for (const debtRecord of snapshot.debtRecords) await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("debt_record", debtRecord.id, { debtRecord }));
+    for (const recurringPayment of snapshot.recurringPayments ?? []) await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("recurring_payment", recurringPayment.id, { recurringPayment }));
   }
 
   private async markWorkspaceSeeded(workspace: GoogleScopedWorkspaceState) {
@@ -643,11 +762,11 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     for (const event of events) {
       await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("event", event.id, { event, members: snapshot.members.filter((member) => member.eventId === event.id) }));
     }
-    const expenses = snapshot.expenses.filter((expense) => expense.groupId === group.id);
-    for (const expense of expenses) {
-      const category = snapshot.categories.find((item) => item.id === expense.categoryId);
-      await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("expense", expense.id, { expense, category }));
-      await this.moveHistoricalReceipt(expense, workspace.uploadsFolderId);
+    const records = snapshot.records.filter((record) => record.groupId === group.id);
+    for (const record of records) {
+      const category = snapshot.categories.find((item) => item.id === record.categoryId);
+      await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("record", record.id, { record, category }));
+      await this.moveHistoricalReceipt(record, workspace.uploadsFolderId);
     }
     for (const settlement of snapshot.settlements.filter((item) => item.events.some((event) => eventIds.has(event.eventId)))) {
       await this.applyOperation(workspace.spreadsheetId, this.syntheticOperation("settlement", settlement.id, { settlement, groupId: group.id }));
@@ -660,22 +779,38 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     }
   }
 
-  private async moveHistoricalReceipt(expense: Expense, uploadsFolderId: string) {
-    if (!expense.receiptFileId) return;
+  private async moveHistoricalReceipt(record: LedgerRecord, uploadsFolderId: string) {
+    if (!record.receiptFileId) return;
     try {
-      await this.moveFile(expense.receiptFileId, uploadsFolderId);
+      await this.moveFile(record.receiptFileId, uploadsFolderId);
     } catch {
       // Preserve the existing Drive file id even when an old receipt is unavailable to this account.
     }
   }
 
-  private isCurrentOwner(snapshot: AppSnapshot, group: Group) {
-    if (group.ownerId === snapshot.currentUser.id) return true;
-    return snapshot.groupMembers.some((member) => member.groupId === group.id && member.role === "owner" && member.status === "active" && member.email.toLowerCase() === this.accountEmail?.toLowerCase());
+  private claimsNewGroupOwnership(snapshot: AppSnapshot, group: Group) {
+    const accountEmail = this.accountEmail?.toLowerCase();
+    return Boolean(accountEmail
+      && snapshot.currentUser.email.toLowerCase() === accountEmail
+      && group.ownerId === snapshot.currentUser.id
+      && snapshot.groupMembers.some((member) => member.groupId === group.id && member.role === "owner" && member.status === "active" && member.email.toLowerCase() === accountEmail));
+  }
+
+  private async groupRole(workspace: GoogleScopedWorkspaceState, groupId: string, groupName: string): Promise<MemberRole | undefined> {
+    const accountEmail = this.accountEmail?.toLowerCase();
+    if (!accountEmail) return undefined;
+    const groups = await this.sheetRows(workspace.spreadsheetId, "Groups");
+    const groupRow = groups.find((row, index) => index > 0 && String(row[0]) === groupId);
+    const members = await this.sheetRows(workspace.spreadsheetId, "GroupMembers");
+    const ownerMember = members.find((row, index) => index > 0 && String(row[1]) === groupId && String(row[5]) === "owner" && String(row[6]) === "active");
+    const ownerEmail = await authoritativeGroupOwner(groupId, String(groupRow?.[1] ?? groupName), ownerMember ? String(ownerMember[4]) : undefined);
+    if (ownerEmail === accountEmail) return "owner";
+    const member = members.find((row, index) => index > 0 && String(row[1]) === groupId && String(row[4]).toLowerCase() === accountEmail && String(row[6]) === "active");
+    if (!member) return undefined;
+    return String(member[5]) === "viewer" ? "viewer" : "member";
   }
 
   private async reconcileGroupPermissions(workspace: GoogleScopedWorkspaceState, snapshot: AppSnapshot, group: Group) {
-    if (!this.isCurrentOwner(snapshot, group)) return;
     const activeMembers = new Map(snapshot.groupMembers
       .filter((member) => member.groupId === group.id && member.status === "active" && member.role !== "owner")
       .map((member) => [member.email.toLowerCase(), member]));
@@ -712,16 +847,24 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     }
   }
 
-  private async deleteGroupWorkspace(groupId: string, requestedBy: string) {
+  private async deleteGroupWorkspace(groupId: string, fallbackName?: string) {
     const folder = await this.findGroupFolder(groupId);
-    if (!folder) return;
+    if (!folder) {
+      const groupName = fallbackName || `Group ${groupId.slice(-6)}`;
+      const ownerEmail = await authoritativeGroupOwner(groupId, groupName);
+      if (!ownerEmail || ownerEmail !== this.accountEmail?.toLowerCase()) throw new Error("Only the registered Group owner can confirm this deletion.");
+      const tombstone = await markGroupDeleted({ groupId, groupName, ownerEmail });
+      return { id: groupId, name: groupName, deletedAt: tombstone.deletedAt };
+    }
     const workbook = (await this.files(`'${folder.id}' in parents and trashed = false and appProperties has { key='billMoshiData' and value='true' }`))[0];
     if (!workbook) throw new Error("The Group Data Sheet is missing; deletion stopped safely.");
     const groups = await this.sheetRows(workbook.id, "Groups");
     const groupRow = groups.find((row, index) => index > 0 && String(row[0]) === groupId);
     const members = await this.sheetRows(workbook.id, "GroupMembers");
     const ownerMember = members.find((row, index) => index > 0 && String(row[1]) === groupId && String(row[5]) === "owner");
-    if (!groupRow || String(groupRow[4]) !== requestedBy || !ownerMember || String(ownerMember[4]).toLowerCase() !== this.accountEmail?.toLowerCase()) {
+    const groupName = String(groupRow?.[1] ?? `Group ${groupId.slice(-6)}`);
+    const ownerEmail = await authoritativeGroupOwner(groupId, groupName, ownerMember ? String(ownerMember[4]) : undefined);
+    if (!groupRow || !ownerMember || !ownerEmail || ownerEmail !== this.accountEmail?.toLowerCase()) {
       throw new Error("Only the Group owner can delete its Google Drive folder.");
     }
     // A shared folder can contain child files owned by another member. Google
@@ -734,62 +877,105 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
         body: JSON.stringify({ trashed: true }),
       });
     });
+    await markGroupDeleted({ groupId, groupName, ownerEmail });
+    return { id: groupId, name: groupName, deletedAt: new Date().toISOString() };
   }
 
-  private async archiveLegacyWorkbook(rootFolderId: string) {
-    const legacy = (await this.files(
-      `'${rootFolderId}' in parents and trashed = false and appProperties has { key='billMoshiWorkbook' and value='true' }`,
-    ))[0];
-    if (!legacy) return false;
-    await this.request(`${DRIVE_API}/files/${legacy.id}?fields=id,name,appProperties`, {
-      method: "PATCH",
-      body: JSON.stringify({ name: "Legacy - Bill Moshi Data", appProperties: { billMoshiWorkbook: "legacy", billMoshiLegacy: "true" } }),
-    });
-    return true;
-  }
 
-  async applyOperations(operations: PendingOperation[], snapshot?: AppSnapshot): Promise<SyncResult> {
+  async applyOperations(
+    operations: PendingOperation[],
+    snapshot?: AppSnapshot,
+    options?: { allowRootCreation?: boolean },
+  ): Promise<SyncResult> {
     return withGoogleWorkspaceAccountLock(
       this.workspaceAccountKey(),
-      () => this.applyOperationsUnlocked(operations, snapshot),
+      () => this.applyOperationsUnlocked(operations, snapshot, options),
     );
   }
 
-  private async applyOperationsUnlocked(operations: PendingOperation[], snapshot?: AppSnapshot): Promise<SyncResult> {
-    const rootFolderId = await this.ensureRootFolder();
+  private async applyOperationsUnlocked(
+    operations: PendingOperation[],
+    snapshot?: AppSnapshot,
+    options?: { allowRootCreation?: boolean },
+  ): Promise<SyncResult> {
+    const rootFolderId = await this.ensureRootFolder(Boolean(options?.allowRootCreation));
     const personal = await this.ensurePersonalWorkspace(rootFolderId);
+    await this.prefetchSheets(personal.spreadsheetId, Object.keys(PERSONAL_SHEET_HEADERS) as SheetName[]);
     if (personal.needsSeed && snapshot) {
       await this.seedPersonalWorkspace(personal, snapshot);
       await this.markWorkspaceSeeded(personal);
       personal.needsSeed = false;
     }
     const groups: Record<string, GoogleScopedWorkspaceState> = {};
+    const unavailableGroups: Array<{ id: string; name: string }> = [];
+    const groupRoles = new Map<string, MemberRole>();
+    const deletedGroups = await confirmedGroupDeletions((snapshot?.groups ?? []).map((group) => group.id));
+    const confirmedDeletedIds = new Set(deletedGroups.map((group) => group.id));
 
     if (snapshot) {
       for (const group of snapshot.groups) {
+        if (confirmedDeletedIds.has(group.id)) continue;
         const activeForAccount = snapshot.groupMembers.some((member) => member.groupId === group.id && member.status === "active" && (member.userId === snapshot.currentUser.id || member.email.toLowerCase() === this.accountEmail?.toLowerCase()));
         if (!activeForAccount) continue;
-        const canCreate = this.isCurrentOwner(snapshot, group);
-        if (!canCreate && !(await this.findGroupFolder(group.id))) continue;
-        const workspace = await this.ensureGroupWorkspace(rootFolderId, group.id, group.name, group.ownerId, canCreate);
+        const claimsOwnership = this.claimsNewGroupOwnership(snapshot, group);
+        const opened = await this.openGroupWorkspace(group.id);
+        if (opened) await this.prefetchSheets(opened.spreadsheetId, ["Groups", "GroupMembers"]);
+        let workspace: EnsuredWorkspace;
+        let role: MemberRole | undefined;
+        if (!opened) {
+          if (!claimsOwnership) {
+            unavailableGroups.push({ id: group.id, name: group.name });
+            continue;
+          }
+          workspace = await this.ensureGroupWorkspace(rootFolderId, group.id, group.name, group.ownerId, true);
+          role = "owner";
+        } else if (opened.needsSeed && claimsOwnership) {
+          workspace = await this.ensureGroupWorkspace(rootFolderId, group.id, group.name, group.ownerId, true);
+          role = "owner";
+        } else {
+          role = await this.groupRole(opened, group.id, group.name);
+          if (!role) {
+            unavailableGroups.push({ id: group.id, name: group.name });
+            continue;
+          }
+          workspace = role === "owner"
+            ? await this.ensureGroupWorkspace(rootFolderId, group.id, group.name, group.ownerId, true)
+            : opened;
+        }
+        if (!role) {
+          unavailableGroups.push({ id: group.id, name: group.name });
+          continue;
+        }
+        await this.prefetchSheets(workspace.spreadsheetId, Object.keys(GROUP_SHEET_HEADERS) as SheetName[]);
         groups[group.id] = workspace;
+        groupRoles.set(group.id, role);
         if (workspace.needsSeed) {
+          if (role !== "owner") throw new GoogleWorkspaceAccessError("Only the Group owner can initialize its Google Sheet.");
           await this.seedGroupWorkspace(workspace, snapshot, group);
           await this.markWorkspaceSeeded(workspace);
           workspace.needsSeed = false;
+          await authoritativeGroupOwner(group.id, group.name, this.accountEmail);
         }
-        await this.reconcileGroupPermissions(workspace, snapshot, group);
+        if (role === "owner") await this.reconcileGroupPermissions(workspace, snapshot, group);
       }
     }
 
     const syncedOperationIds: string[] = [];
+    const conflicts: RecordSyncConflict[] = [];
+    const conflictedRecordIds = new Set<string>();
+    const touchedGroupIds = new Set<string>();
+    const unavailableGroupIds = new Set(unavailableGroups.map((group) => group.id));
     const deletedGroupIds = deletedGroupIdsInBatch(operations);
     const eventGroupIds = new Map(
       (snapshot?.events ?? []).map((event) => [event.id, event.groupId]),
     );
     for (const operation of operations.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))) {
       const scope = operationWorkspaceScope(operation, eventGroupIds);
+      if (scope.kind === "group") touchedGroupIds.add(scope.groupId);
       const isGroupDelete = scope.kind === "group" && operation.entityType === "group" && operation.action === "delete";
+      if (scope.kind === "group" && unavailableGroupIds.has(scope.groupId) && !isGroupDelete) {
+        continue;
+      }
       if (scope.kind === "group" && deletedGroupIds.has(scope.groupId) && !isGroupDelete) {
         // The group's final local state is deleted. Older queued writes for that
         // workspace (for example an invitation) are obsolete and must not try
@@ -798,11 +984,13 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
         continue;
       }
       if (isGroupDelete) {
-        const payload = operation.payload as { requestedBy?: string };
+        const payload = operation.payload as { groupName?: string };
         const deletedWorkspace = groups[scope.groupId];
         if (deletedWorkspace) this.pendingValueUpdates.delete(deletedWorkspace.spreadsheetId);
-        await this.deleteGroupWorkspace(scope.groupId, String(payload.requestedBy ?? ""));
+        const tombstone = await this.deleteGroupWorkspace(scope.groupId, payload.groupName);
+        if (tombstone && !deletedGroups.some((group) => group.id === tombstone.id)) deletedGroups.push(tombstone);
         delete groups[scope.groupId];
+        groupRoles.delete(scope.groupId);
         syncedOperationIds.push(operation.id);
         continue;
       }
@@ -812,17 +1000,39 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
         const group = snapshot?.groups.find((item) => item.id === scope.groupId)
           ?? ((operation.payload as { group?: Group }).group);
         const groupName = group?.name ?? `Group ${scope.groupId.slice(-6)}`;
-        const canCreate = Boolean(group && snapshot && this.isCurrentOwner(snapshot, group));
-        workspace = groups[scope.groupId] ?? await this.ensureGroupWorkspace(rootFolderId, scope.groupId, groupName, group?.ownerId, canCreate);
+        if (!groups[scope.groupId]) {
+          const opened = await this.openGroupWorkspace(scope.groupId);
+          if (!opened) throw new GoogleWorkspaceAccessError(`${groupName} storage is unavailable. Local changes remain pending.`);
+          const role = await this.groupRole(opened, scope.groupId, groupName);
+          if (!role) throw new GoogleWorkspaceAccessError(`This Google account is not an active member of ${groupName}.`);
+          groupRoles.set(scope.groupId, role);
+          groups[scope.groupId] = role === "owner" && group
+            ? await this.ensureGroupWorkspace(rootFolderId, scope.groupId, groupName, group.ownerId, true)
+            : opened;
+        }
+        workspace = groups[scope.groupId];
         groups[scope.groupId] = workspace;
         if ((workspace as EnsuredWorkspace).needsSeed && snapshot && group) {
+          if (groupRoles.get(scope.groupId) !== "owner") throw new GoogleWorkspaceAccessError("Only the Group owner can initialize its Google Sheet.");
           await this.seedGroupWorkspace(workspace, snapshot, group);
           await this.markWorkspaceSeeded(workspace);
           (workspace as EnsuredWorkspace).needsSeed = false;
         }
       }
 
+      if (operation.entityType === "record" && conflictedRecordIds.has(operation.entityId)) continue;
       if (!(await this.alreadyApplied(workspace.spreadsheetId, operation.idempotencyKey))) {
+        if (scope.kind === "group") {
+          const role = groupRoles.get(scope.groupId);
+          if (!role || role === "viewer") throw new GoogleWorkspaceAccessError("This Group role cannot modify Google Sheet records.");
+          if (["group", "group_member", "invitation", "join_request"].includes(operation.entityType) && role !== "owner") throw new GoogleWorkspaceAccessError("Only the Group owner can change Group access or settings.");
+          const conflict = await this.recordConflict(workspace.spreadsheetId, operation, scope.groupId, role === "owner");
+          if (conflict) {
+            conflicts.push(conflict);
+            conflictedRecordIds.add(operation.entityId);
+            continue;
+          }
+        }
         await this.applyOperation(workspace.spreadsheetId, operation);
         await this.upsert(workspace.spreadsheetId, "SyncLog", [operation.idempotencyKey, new Date().toISOString()]);
       }
@@ -830,10 +1040,18 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     }
 
     await this.flushValueUpdates();
-    const legacyWorkbookArchived = snapshot ? await this.archiveLegacyWorkbook(rootFolderId) : false;
+    const pulledGroupIds = [...(operations.length > 0 ? touchedGroupIds : new Set(Object.keys(groups)))].filter((groupId) => Boolean(groups[groupId]));
+    const remoteRecords = (await Promise.all(pulledGroupIds.map((groupId) => this.groupRecords(groups[groupId])))).flat();
+    const remoteGroupStates = (await Promise.all(pulledGroupIds.map((groupId) => this.groupState(groups[groupId])))).filter((state): state is RemoteGroupState => Boolean(state));
     return {
       syncedOperationIds,
-      workspace: { rootFolderId, personal, groups, legacyWorkbookArchived },
+      conflicts,
+      pulledGroupIds,
+      remoteRecords,
+      remoteGroupStates,
+      unavailableGroups,
+      deletedGroups,
+      workspace: { rootFolderId, personal, groups },
     };
   }
 
@@ -844,11 +1062,39 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
     );
   }
 
+  // Factory reset deliberately targets only roots created and marked by this
+  // app. It never searches by a generic folder name and never creates storage.
+  async factoryReset() {
+    return withGoogleWorkspaceAccountLock(this.workspaceAccountKey(), async () => {
+      const roots = await this.files(
+        "trashed = false and mimeType = 'application/vnd.google-apps.folder' and appProperties has { key='billMoshiRoot' and value='true' }",
+        "files(id,name,appProperties)",
+      );
+      for (const root of roots) {
+        await this.request(`${DRIVE_API}/files/${root.id}?fields=id,trashed`, {
+          method: "PATCH",
+          body: JSON.stringify({ trashed: true }),
+        });
+      }
+      if (this.accountEmail) await markOwnedGroupsDeleted(this.accountEmail);
+      return { trashedRoots: roots.length };
+    });
+  }
+
   private async uploadReceiptUnlocked(input: UploadReceiptInput): Promise<string> {
-    const rootFolderId = await this.ensureRootFolder();
-    const workspace = input.scope === "personal"
-      ? await this.ensurePersonalWorkspace(rootFolderId)
-      : await this.ensureGroupWorkspace(rootFolderId, required(input.groupId, "A Group id is required for a shared receipt."), input.groupName ?? "Group", undefined, Boolean(input.canCreateGroupWorkspace));
+    let workspace: GoogleScopedWorkspaceState;
+    if (input.scope === "personal") {
+      const rootFolderId = await this.ensureRootFolder(Boolean(input.allowRootCreation));
+      workspace = await this.ensurePersonalWorkspace(rootFolderId);
+    } else {
+      const groupId = required(input.groupId, "A Group id is required for a shared receipt.");
+      const opened = await this.openGroupWorkspace(groupId);
+      if (!opened) throw new GoogleWorkspaceAccessError("The Group folder has not been shared with this Google account.");
+      const role = await this.groupRole(opened, groupId, input.groupName ?? "Group");
+      if (!role || role === "viewer") throw new GoogleWorkspaceAccessError("This Group role cannot upload receipts.");
+      if (!opened.uploadsFolderId) throw new GoogleWorkspaceAccessError("The Group Uploads folder is unavailable. Ask the owner to sync the Group first.");
+      workspace = opened;
+    }
     const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "receipt";
     const fileProperties: Record<string, string> = {
       billMoshiRecordId: input.recordId,
@@ -856,7 +1102,6 @@ export class GoogleWorkspaceAdapter implements GoogleWorkspacePort {
       billMoshiWorkspaceType: input.scope,
       billMoshiEvent: input.eventName,
     };
-    if ((input.recordType ?? "expense") === "expense") fileProperties.billMoshiExpenseId = input.recordId;
     if (input.groupId) fileProperties.billMoshiGroupId = input.groupId;
     const metadata = {
       name: `${input.recordId}-${safeName}`,

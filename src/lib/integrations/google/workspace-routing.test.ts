@@ -17,17 +17,18 @@ function operation(input: Partial<PendingOperation> & Pick<PendingOperation, "en
 
 describe("operationWorkspaceScope", () => {
   it("routes settings, debt records, and categories to Personal", () => {
+    expect(operationWorkspaceScope(operation({ entityType: "recurring_payment", payload: {} }))).toEqual({ kind: "personal" });
     expect(operationWorkspaceScope(operation({ entityType: "user_settings", payload: {} }))).toEqual({ kind: "personal" });
     expect(operationWorkspaceScope(operation({ entityType: "debt_record", payload: {} }))).toEqual({ kind: "personal" });
     expect(operationWorkspaceScope(operation({ entityType: "category", payload: {} }))).toEqual({ kind: "personal" });
   });
 
   it("routes personal records to Personal", () => {
-    expect(operationWorkspaceScope(operation({ entityType: "expense", payload: { expense: { id: "personal" } } }))).toEqual({ kind: "personal" });
+    expect(operationWorkspaceScope(operation({ entityType: "record", payload: { record: { id: "personal" } } }))).toEqual({ kind: "personal" });
   });
 
   it("routes Group records and deletes to the matching Group", () => {
-    expect(operationWorkspaceScope(operation({ entityType: "expense", payload: { expense: { groupId: "group-family" } } }))).toEqual({ kind: "group", groupId: "group-family" });
+    expect(operationWorkspaceScope(operation({ entityType: "record", payload: { record: { groupId: "group-family" } } }))).toEqual({ kind: "group", groupId: "group-family" });
     expect(operationWorkspaceScope(operation({ entityType: "event", action: "delete", payload: { groupId: "group-family" } }))).toEqual({ kind: "group", groupId: "group-family" });
     expect(operationWorkspaceScope(operation({ entityType: "settlement", payload: { groupId: "group-roommates" } }))).toEqual({ kind: "group", groupId: "group-roommates" });
   });

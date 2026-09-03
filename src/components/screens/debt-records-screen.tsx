@@ -188,23 +188,23 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
         <section className="grid grid-cols-[46%_54%] items-center border-b border-line py-8">
           <label className="relative flex w-fit items-center gap-2">
             <span className="sr-only">Currency</span>
-            <select aria-label="Currency" name="currency" autoComplete="off" value={currency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="record-currency-display max-w-full appearance-none bg-transparent pr-8 font-extrabold outline-none">{SUPPORTED_CURRENCIES.map((code) => <option key={code}>{code}</option>)}</select>
+            <select aria-label="Currency" name="currency" autoComplete="off" value={currency} onChange={(event) => setCurrency(event.target.value as CurrencyCode)} className="record-currency-display min-h-11 max-w-full appearance-none bg-transparent pr-8 font-extrabold outline-none">{SUPPORTED_CURRENCIES.map((code) => <option key={code}>{code}</option>)}</select>
             <ChevronDown className="pointer-events-none absolute right-0 text-muted" size={20} />
           </label>
           <input aria-label="Total debt amount" name="amount" autoComplete="off" type="number" min="0" step={currency === "JPY" ? "1" : "0.01"} inputMode="decimal" className="record-amount-display min-w-0 bg-transparent text-right font-extrabold outline-none placeholder:text-slate-300" placeholder="0" value={amount} onChange={(event) => setAmount(event.target.value)} />
         </section>
 
-        <DebtRecordRow label="Date"><input aria-label="Debt date" name="debt-date" autoComplete="off" type="date" value={date} onChange={(event) => setDate(event.target.value)} className="w-full bg-transparent text-right text-sm font-bold text-muted outline-none" required /></DebtRecordRow>
-        <DebtRecordRow label="Due date"><input aria-label="Debt due date" name="due-date" autoComplete="off" type="date" value={dueDate} min={date} onChange={(event) => setDueDate(event.target.value)} className="w-full bg-transparent text-right text-sm font-bold text-muted outline-none" /></DebtRecordRow>
-        <DebtRecordRow label="Name"><input aria-label="Debt name" name="debt-name" autoComplete="off" value={recordName} onChange={(event) => setRecordName(event.target.value)} className="w-full bg-transparent text-sm font-bold outline-none placeholder:text-slate-400" placeholder="e.g. Restaurant bill…" required /></DebtRecordRow>
+        <DebtRecordRow label="Date"><input aria-label="Debt date" name="debt-date" autoComplete="off" type="date" value={date} onChange={(event) => setDate(event.target.value)} className="min-h-11 w-full bg-transparent text-right text-sm font-bold text-muted outline-none" required /></DebtRecordRow>
+        <DebtRecordRow label="Due date"><input aria-label="Debt due date" name="due-date" autoComplete="off" type="date" value={dueDate} min={date} onChange={(event) => setDueDate(event.target.value)} className="min-h-11 w-full bg-transparent text-right text-sm font-bold text-muted outline-none" /></DebtRecordRow>
+        <DebtRecordRow label="Name"><input aria-label="Debt name" name="debt-name" autoComplete="off" value={recordName} onChange={(event) => setRecordName(event.target.value)} className="min-h-11 w-full bg-transparent text-sm font-bold outline-none placeholder:text-placeholder" placeholder="e.g. Restaurant bill…" required /></DebtRecordRow>
         <DebtRecordRow label="Memo" alignStart>
           <div className="flex min-w-0 items-start gap-2">
             <textarea aria-label="Debt memo" name="debt-memo" autoComplete="off" value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="min-h-16 min-w-0 flex-1 resize-none bg-transparent text-sm leading-6 outline-none placeholder:text-slate-400" placeholder="Add a note (optional)…" />
-            <label className="grid size-10 shrink-0 cursor-pointer place-items-center rounded-xl bg-brand-soft text-brand-dark" aria-label="Attach debt photos"><Camera size={19} /><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple className="sr-only" onChange={(event) => { addPhotos(event.target.files); event.target.value = ""; }} /></label>
+            <label className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-xl bg-brand-soft text-brand-dark" aria-label="Attach debt photos"><Camera size={19} /><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple className="sr-only" onChange={(event) => { addPhotos(event.target.files); event.target.value = ""; }} /></label>
           </div>
           {((editingDebtRecord?.photoNames?.length ?? 0) > 0 || photos.length > 0) && <div className="mt-2 grid gap-1.5">
-            {(editingDebtRecord?.photoNames ?? []).map((photoName, index) => <span key={`${photoName}-${index}`} className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photoName}</span><span className="ml-auto shrink-0 text-[0.62rem] text-muted">Saved</span></span>)}
-            {photos.map((photo, index) => <span key={`${photo.name}-${photo.lastModified}-${index}`} className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photo.name}</span><button type="button" onClick={() => { setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index)); setFormDirty(true); }} className="ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-danger" aria-label={`Remove ${photo.name}`}><X size={14} /></button></span>)}
+            {(editingDebtRecord?.photoNames ?? []).map((photoName, index) => { const fileId = Object.values(editingDebtRecord?.photoFileIds ?? {})[index]; return fileId ? <a key={`${photoName}-${index}`} href={`https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`} target="_blank" rel="noopener noreferrer" className="flex min-h-11 min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photoName}</span><span className="ml-auto shrink-0 text-[0.62rem] underline">Open</span></a> : <span key={`${photoName}-${index}`} className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photoName}</span><span className="ml-auto shrink-0 text-[0.62rem] text-muted">Saved</span></span>; })}
+            {photos.map((photo, index) => <span key={`${photo.name}-${photo.lastModified}-${index}`} className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={13} className="shrink-0" /><span className="truncate">{photo.name}</span><button type="button" onClick={() => { setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index)); setFormDirty(true); }} className="ml-auto grid size-11 shrink-0 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-danger" aria-label={`Remove ${photo.name}`}><X size={14} /></button></span>)}
           </div>}
           <p className="mt-2 text-[0.68rem] leading-5 text-muted">Up to 5 JPEG, PNG, or WebP photos · 15 MB each</p>
         </DebtRecordRow>
@@ -234,7 +234,7 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
         </DebtRecordRow>
 
         {!editMode && <DebtRecordRow label="Split method">
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5 min-[380px]:grid-cols-4">
             {([
               ["equal", "Equal"],
               ["exact", "Exact"],
@@ -252,7 +252,7 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
               const activeIndex = activeSplitParticipants.findIndex((item) => item.key === participant.key);
               const calculatedShare = activeIndex >= 0 ? calculatedShares[activeIndex] : undefined;
               return <div key={participant.key} className={`flex min-h-12 items-center gap-2 rounded-xl transition ${active ? "text-ink" : "text-slate-400"}`}>
-              <Avatar name={participant.name} color={participant.isMe ? "#2F80ED" : "#6EBBF1"} size="sm" />
+              <Avatar name={participant.name} color={participant.isMe ? "var(--color-avatar-brand)" : "var(--color-avatar-soft)"} size="sm" />
               <span className="min-w-0 flex-1 truncate text-sm font-extrabold">{participant.name}{participant.isMe && <span className="ml-1 font-semibold text-muted">(me)</span>}</span>
               {active && (shareMethod === "equal" ? <span className="shrink-0 text-xs font-extrabold text-muted">{calculatedShare === undefined ? "—" : formatMoney(calculatedShare, currency)}</span> : <div className="relative w-28">
                 <input
@@ -264,14 +264,14 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
                   max={shareMethod === "percentage" ? "100" : undefined}
                   step={shareMethod === "exact" && currency === "JPY" ? "1" : "0.01"}
                   inputMode="decimal"
-                  className="h-10 w-full rounded-lg bg-slate-50 px-2 pr-9 text-right text-xs font-extrabold outline-none focus:ring-2 focus:ring-brand"
+                  className="h-11 w-full rounded-lg bg-slate-50 px-2 pr-9 text-right text-xs font-extrabold outline-none focus:ring-2 focus:ring-brand"
                   value={activeShareInputs[activeIndex]}
                   onChange={(event) => updateShareValue(participant.key, event.target.value)}
                 />
                 <span className="pointer-events-none absolute right-2 top-3 text-[0.62rem] font-bold text-muted">{shareMethod === "percentage" ? "%" : shareMethod === "shares" ? "×" : currency}</span>
               </div>)}
               {!active && <span className="shrink-0 text-xs font-bold text-muted">Excluded</span>}
-              <button type="button" onClick={() => toggleSplitParticipant(participant.key)} aria-label={`${active ? "Exclude" : "Include"} ${participant.isMe ? "me" : participant.name}`} aria-pressed={active} className={`grid size-8 shrink-0 place-items-center rounded-full border transition ${active ? "border-brand bg-brand text-brand-ink" : "border-slate-300 bg-white"}`}>{active && <Check size={17} strokeWidth={2.7} />}</button>
+              <button type="button" onClick={() => toggleSplitParticipant(participant.key)} aria-label={`${active ? "Exclude" : "Include"} ${participant.isMe ? "me" : participant.name}`} aria-pressed={active} className={`grid size-11 shrink-0 place-items-center rounded-full border transition ${active ? "border-brand bg-brand text-brand-ink" : "border-slate-300 bg-white"}`}>{active && <Check size={17} strokeWidth={2.7} />}</button>
             </div>})}
             {personNames.length === 0 && <p className="py-3 text-sm leading-6 text-muted">Add names above to edit each person&apos;s share.</p>}
           </div>
@@ -295,7 +295,7 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
 
       {view === "overview" && <div className="flex items-start gap-3 rounded-xl border border-brand/30 bg-brand-soft/55 p-4 text-sm text-brand-dark">
         <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white"><HandCoins size={18} /></span>
-        <div><p className="font-extrabold">Reimbursement tracker</p><p className="mt-1 leading-5 text-muted">Debt records track paid and unpaid amounts independently. They do not change Expense records or balances.</p></div>
+        <div><p className="font-extrabold">Reimbursement tracker</p><p className="mt-1 leading-5 text-muted">Debt records track paid and unpaid amounts independently. They do not change LedgerRecord records or balances.</p></div>
       </div>}
 
       {view === "overview" && <section aria-label="Unpaid debt totals" className="grid grid-cols-2 gap-3">
@@ -306,7 +306,7 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
       {view === "records" && <section>
         <div className="mb-3 flex items-end justify-between gap-3"><div><h2 className="text-lg font-extrabold">Payment status</h2><p className="mt-1 text-xs text-muted">Check who has paid you and who is still unpaid.</p></div><span className="text-xs font-bold text-muted">{records.length} record{records.length === 1 ? "" : "s"}</span></div>
         <div className="mb-3 grid grid-cols-3 rounded-xl bg-slate-100 p-1" role="group" aria-label="Debt record filter">
-          {(["all", "unpaid", "paid"] as const).map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`min-h-10 rounded-lg text-xs font-extrabold capitalize transition ${filter === value ? "bg-white text-ink shadow-sm" : "text-muted"}`}>{value}</button>)}
+          {(["all", "unpaid", "paid"] as const).map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`min-h-11 rounded-lg text-xs font-extrabold capitalize transition ${filter === value ? "bg-white text-ink shadow-sm" : "text-muted"}`}>{value}</button>)}
         </div>
         <Card className="divide-y divide-line overflow-hidden">
           {records.length === 0 ? <EmptyState icon={<HandCoins size={24} />} title={filter === "unpaid" ? "No unpaid debts" : "No debt records"} body={filter === "all" ? "Add each person's share after you cover a bill." : `No ${filter} records match this filter.`} action={<Link href="/debts/new" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-brand px-4 text-sm font-bold text-brand-ink">Add debt record</Link>} /> : records.map((record) => {
@@ -317,8 +317,8 @@ export function DebtRecordsScreen({ composerMode = false, editingDebtRecordId, v
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-extrabold">{record.name || relation}</p><p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">{record.name && <span>{relation} ·</span>}<CalendarDays size={13} /> {formatDebtDate(record.date)}{record.dueDate ? ` · Due ${formatDebtDate(record.dueDate)}` : ""}</p></div><p className={`shrink-0 text-sm font-extrabold ${borrowed ? "text-danger" : "text-success"}`}>{formatMoney(record.amount, record.currency)}</p></div>
                 {record.note && <p className="mt-2 text-sm leading-5 text-muted">{record.note}</p>}
-                {(record.photoNames?.length ?? 0) > 0 && <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-brand-dark"><ImageIcon size={14} />{record.photoNames!.length} attached {record.photoNames!.length === 1 ? "photo" : "photos"}</p>}
-                <div className="mt-3 flex items-center justify-between gap-3"><span className={`rounded-full px-2.5 py-1 text-[0.65rem] font-extrabold ${record.status === "unpaid" ? "bg-warning-soft text-warning" : "bg-success-soft text-success"}`}>{record.status === "unpaid" ? "Unpaid" : "Paid"}</span><div className="flex items-center gap-1"><Link href={`/debts/${record.id}/edit`} aria-label={`Edit debt record for ${record.personName}`} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-extrabold text-muted hover:bg-slate-100 hover:text-ink"><Pencil size={14} />Edit</Link><button type="button" onClick={() => updateDebtRecordStatus(record.id, record.status === "unpaid" ? "paid" : "unpaid")} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-extrabold text-brand-dark hover:bg-brand-soft">{record.status === "unpaid" ? <CheckCircle2 size={15} /> : <RotateCcw size={14} />}{record.status === "unpaid" ? "Mark paid" : "Mark unpaid"}</button></div></div>
+                {(record.photoNames?.length ?? 0) > 0 && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold text-brand-dark"><ImageIcon size={14} /><span>{record.photoNames!.length} attached {record.photoNames!.length === 1 ? "photo" : "photos"}</span>{Object.values(record.photoFileIds ?? {}).map((fileId, index) => <a key={fileId} href={`https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-lg px-2 underline">Open {record.photoNames?.[index] ?? `photo ${index + 1}`}</a>)}</div>}
+                <div className="mt-3 flex items-center justify-between gap-3"><span className={`rounded-full px-2.5 py-1 text-[0.65rem] font-extrabold ${record.status === "unpaid" ? "bg-warning-soft text-warning" : "bg-success-soft text-success"}`}>{record.status === "unpaid" ? "Unpaid" : "Paid"}</span><div className="flex items-center gap-1"><Link href={`/debts/${record.id}/edit`} aria-label={`Edit debt record for ${record.personName}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 text-xs font-extrabold text-muted hover:bg-slate-100 hover:text-ink"><Pencil size={14} />Edit</Link><button type="button" onClick={() => updateDebtRecordStatus(record.id, record.status === "unpaid" ? "paid" : "unpaid")} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 text-xs font-extrabold text-brand-dark hover:bg-brand-soft">{record.status === "unpaid" ? <CheckCircle2 size={15} /> : <RotateCcw size={14} />}{record.status === "unpaid" ? "Mark paid" : "Mark unpaid"}</button></div></div>
               </div>
             </article>;
           })}

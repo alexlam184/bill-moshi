@@ -2,7 +2,7 @@ import "next-auth";
 
 declare module "next-auth" {
   interface Session {
-    accessToken?: string;
+    googleConnected?: boolean;
     authError?: "RefreshAccessTokenError";
   }
 }

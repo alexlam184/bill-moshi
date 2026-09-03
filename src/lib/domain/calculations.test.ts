@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocateSplits, eventNetBalances, expenseMatchesInsightScope, expenseMatchesRecordContext, expenseRelatedToUser, groupCurrencyBalancesForUser, groupDailyNetBalances, groupNetBalancesByUser, groupSpendingByDay, memberIdsForUser, overallReportingBalanceForUser, recordsMissingReportingRate, roundMoney, settlementRelatedToUser, simplifyBalances } from "./calculations";
+import { allocateSplits, eventNetBalances, recordMatchesInsightScope, recordMatchesRecordContext, recordRelatedToUser, groupCurrencyBalancesForUser, groupDailyNetBalances, groupNetBalancesByUser, groupSpendingByDay, memberIdsForUser, overallReportingBalanceForUser, recordsMissingReportingRate, roundMoney, settlementRelatedToUser, simplifyBalances } from "./calculations";
 import { buildMonthGrid, calendarDayTotals, calendarMonthTotals, recordsForCalendarScope } from "./calendar";
 import { insightDateRange, recordInInsightDateRange, recordsForInsightScope, summarizeInsightRecords } from "./insights";
 import { dateInRange } from "./date-filter";
@@ -42,8 +42,8 @@ describe("monthly calendar", () => {
   });
 
   it("keeps All Groups personal records while a Group calendar stays scoped", () => {
-    const allRecords = recordsForCalendarScope(seedSnapshot.expenses);
-    const familyRecords = recordsForCalendarScope(seedSnapshot.expenses, "group-family");
+    const allRecords = recordsForCalendarScope(seedSnapshot.records);
+    const familyRecords = recordsForCalendarScope(seedSnapshot.records, "group-family");
 
     expect(allRecords.some((record) => !record.groupId)).toBe(true);
     expect(familyRecords.every((record) => record.groupId === "group-family")).toBe(true);
@@ -51,7 +51,7 @@ describe("monthly calendar", () => {
   });
 
   it("summarizes expenses, income, and transfers without mixing currencies", () => {
-    const template = seedSnapshot.expenses.find((record) => record.id === "expense-groceries")!;
+    const template = seedSnapshot.records.find((record) => record.id === "expense-groceries")!;
     const records = [
       { ...template, id: "calendar-expense", transactionDate: "2026-08-10T10:00:00.000Z", amountOriginal: 80, recordType: "expense" as const },
       { ...template, id: "calendar-income", transactionDate: "2026-08-10T12:00:00.000Z", amountOriginal: 30, recordType: "income" as const },
@@ -67,9 +67,9 @@ describe("monthly calendar", () => {
 
 describe("Insight reporting", () => {
   it("switches cleanly between Group and Myself ledgers", () => {
-    const family = recordsForInsightScope(seedSnapshot.expenses, "group", "group-family");
-    const toronto = recordsForInsightScope(seedSnapshot.expenses, "group", "group-family", "event-toronto");
-    const myself = recordsForInsightScope(seedSnapshot.expenses, "myself");
+    const family = recordsForInsightScope(seedSnapshot.records, "group", "group-family");
+    const toronto = recordsForInsightScope(seedSnapshot.records, "group", "group-family", "event-toronto");
+    const myself = recordsForInsightScope(seedSnapshot.records, "myself");
 
     expect(family.every((record) => record.groupId === "group-family")).toBe(true);
     expect(toronto.every((record) => record.eventId === "event-toronto")).toBe(true);
@@ -88,11 +88,11 @@ describe("Insight reporting", () => {
     expect(insightDateRange("custom", today, { start: "2026-08-09", end: "2026-08-10" })).toEqual({ start: "2026-08-09", end: "2026-08-10" });
 
     const range = { start: "2026-08-09", end: "2026-08-10" };
-    expect(seedSnapshot.expenses.filter((record) => recordInInsightDateRange(record, range)).map((record) => record.id)).toEqual(expect.arrayContaining(["expense-groceries", "expense-personal-coffee"]));
+    expect(seedSnapshot.records.filter((record) => recordInInsightDateRange(record, range)).map((record) => record.id)).toEqual(expect.arrayContaining(["expense-groceries", "expense-personal-coffee"]));
   });
 
-  it("shows Income, Expense, Balance, and all Record types without mixing currencies", () => {
-    const template = seedSnapshot.expenses.find((record) => record.id === "expense-groceries")!;
+  it("shows Income, LedgerRecord, Balance, and all Record types without mixing currencies", () => {
+    const template = seedSnapshot.records.find((record) => record.id === "expense-groceries")!;
     const records = [
       { ...template, id: "insight-expense", recordType: "expense" as const, amountBase: 80 },
       { ...template, id: "insight-income", recordType: "income" as const, amountBase: 30 },
@@ -179,18 +179,18 @@ describe("standalone debt records", () => {
 
 describe("balances", () => {
   it("always produces a zero-sum event balance", () => {
-    const balances = eventNetBalances("event-toronto", seedSnapshot.members, seedSnapshot.expenses, []);
+    const balances = eventNetBalances("event-toronto", seedSnapshot.members, seedSnapshot.records, []);
     expect(roundMoney([...balances.values()].reduce((sum, balance) => sum + balance, 0), "CAD")).toBeCloseTo(0);
   });
 
   it("keeps optional-event daily expenses in a zero-sum group balance", () => {
-    const balances = groupDailyNetBalances("group-family", "CAD", seedSnapshot.groupMembers, seedSnapshot.expenses);
+    const balances = groupDailyNetBalances("group-family", "CAD", seedSnapshot.groupMembers, seedSnapshot.records);
     expect(roundMoney([...balances.values()].reduce((sum, balance) => sum + balance, 0), "CAD")).toBeCloseTo(0);
     expect(balances.get("group-member-tom-family")).toBeGreaterThan(0);
   });
 
   it("a partial settlement reduces both sides while preserving zero-sum", () => {
-    const before = eventNetBalances("event-toronto", seedSnapshot.members, seedSnapshot.expenses, []);
+    const before = eventNetBalances("event-toronto", seedSnapshot.members, seedSnapshot.records, []);
     const debt = simplifyBalances(before, "CAD")[0];
     expect(debt).toBeDefined();
     const settlement: Settlement = {
@@ -207,29 +207,29 @@ describe("balances", () => {
       events: [{ eventId: "event-toronto", allocatedAmount: 10 }],
       syncStatus: "pending",
     };
-    const after = eventNetBalances("event-toronto", seedSnapshot.members, seedSnapshot.expenses, [settlement]);
+    const after = eventNetBalances("event-toronto", seedSnapshot.members, seedSnapshot.records, [settlement]);
     expect(roundMoney((after.get(debt.fromMemberId) ?? 0) - (before.get(debt.fromMemberId) ?? 0), "CAD")).toBe(10);
     expect(roundMoney((after.get(debt.toMemberId) ?? 0) - (before.get(debt.toMemberId) ?? 0), "CAD")).toBe(-10);
     expect(roundMoney([...after.values()].reduce((sum, balance) => sum + balance, 0), "CAD")).toBe(0);
   });
 
   it("aggregates a group across daily and event expenses without mixing currencies", () => {
-    const balances = groupNetBalancesByUser("group-family", "CAD", seedSnapshot.events, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.expenses, seedSnapshot.settlements);
+    const balances = groupNetBalancesByUser("group-family", "CAD", seedSnapshot.events, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.records, seedSnapshot.settlements);
     const total = [...balances.values()].reduce((sum, balance) => sum + balance, 0);
     expect(roundMoney(total, "CAD")).toBe(0);
     expect(balances.size).toBe(3);
   });
 
   it("summarizes what the current user owes or is owed in each Group currency", () => {
-    const tom = groupCurrencyBalancesForUser("group-family", "user-tom", seedSnapshot.events, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.expenses, seedSnapshot.settlements);
-    const alex = groupCurrencyBalancesForUser("group-family", "user-alex", seedSnapshot.events, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.expenses, seedSnapshot.settlements);
+    const tom = groupCurrencyBalancesForUser("group-family", "user-tom", seedSnapshot.events, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.records, seedSnapshot.settlements);
+    const alex = groupCurrencyBalancesForUser("group-family", "user-alex", seedSnapshot.events, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.records, seedSnapshot.settlements);
 
     expect(tom).toEqual([{ currency: "CAD", balance: 362.04 }]);
     expect(alex).toEqual([{ currency: "CAD", balance: -151.48 }]);
   });
 
   it("builds a seven-day group and current-user spending series", () => {
-    const days = groupSpendingByDay("group-family", "CAD", seedSnapshot.currentUser.id, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.expenses);
+    const days = groupSpendingByDay("group-family", "CAD", seedSnapshot.currentUser.id, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.records);
     expect(days).toHaveLength(7);
     expect(days.at(-1)?.date).toBe("2026-09-22");
     expect(days.reduce((sum, day) => sum + day.groupAmount, 0)).toBeGreaterThan(0);
@@ -238,7 +238,7 @@ describe("balances", () => {
 
   it("reverses shared income and applies a transfer between two members", () => {
     const income = {
-      ...seedSnapshot.expenses.find((expense) => expense.id === "expense-groceries")!,
+      ...seedSnapshot.records.find((record) => record.id === "expense-groceries")!,
       id: "income-refund",
       recordType: "income" as const,
       amountOriginal: 90,
@@ -266,26 +266,26 @@ describe("balances", () => {
   });
 
   it("excludes income and transfers from seven-day spending", () => {
-    const base = groupSpendingByDay("group-family", "CAD", seedSnapshot.currentUser.id, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.expenses);
-    const original = seedSnapshot.expenses.find((expense) => expense.id === "expense-uber")!;
+    const base = groupSpendingByDay("group-family", "CAD", seedSnapshot.currentUser.id, seedSnapshot.members, seedSnapshot.groupMembers, seedSnapshot.records);
+    const original = seedSnapshot.records.find((record) => record.id === "expense-uber")!;
     const otherRecords = [
       { ...original, id: "income-test", recordType: "income" as const, amountBase: 999, amountOriginal: 999 },
       { ...original, id: "transfer-test", recordType: "transfer" as const, amountBase: 999, amountOriginal: 999 },
     ];
-    const withOtherRecords = groupSpendingByDay("group-family", "CAD", seedSnapshot.currentUser.id, seedSnapshot.members, seedSnapshot.groupMembers, [...seedSnapshot.expenses, ...otherRecords]);
+    const withOtherRecords = groupSpendingByDay("group-family", "CAD", seedSnapshot.currentUser.id, seedSnapshot.members, seedSnapshot.groupMembers, [...seedSnapshot.records, ...otherRecords]);
     expect(withOtherRecords).toEqual(base);
   });
 
   it("settles a debt relation with an equal Transfer record", () => {
-    const template = seedSnapshot.expenses.find((expense) => expense.id === "expense-groceries")!;
-    const expense = {
+    const template = seedSnapshot.records.find((record) => record.id === "expense-groceries")!;
+    const record = {
       ...template,
       id: "expense-debt-source",
       amountOriginal: 30,
       amountBase: 30,
       splits: allocateSplits("expense-debt-source", 30, "CAD", "exact", [{ memberId: "group-member-alex-family", value: 30 }]),
     };
-    const before = groupDailyNetBalances("group-family", "CAD", seedSnapshot.groupMembers, [expense]);
+    const before = groupDailyNetBalances("group-family", "CAD", seedSnapshot.groupMembers, [record]);
     const debt = simplifyBalances(before, "CAD")[0];
     const transfer = {
       ...template,
@@ -296,7 +296,7 @@ describe("balances", () => {
       amountBase: debt.amount,
       splits: allocateSplits("transfer-debt-settlement", debt.amount, "CAD", "exact", [{ memberId: debt.toMemberId, value: debt.amount }]),
     };
-    const after = groupDailyNetBalances("group-family", "CAD", seedSnapshot.groupMembers, [expense, transfer]);
+    const after = groupDailyNetBalances("group-family", "CAD", seedSnapshot.groupMembers, [record, transfer]);
 
     expect(debt).toEqual({ fromMemberId: "group-member-alex-family", toMemberId: "group-member-tom-family", amount: 30 });
     expect([...after.values()]).toEqual([0, 0, 0]);
@@ -305,7 +305,7 @@ describe("balances", () => {
 });
 
 describe("All Groups reporting currency", () => {
-  const source = seedSnapshot.expenses.find((expense) => expense.id === "expense-groceries")!;
+  const source = seedSnapshot.records.find((record) => record.id === "expense-groceries")!;
   const converted = {
     ...source,
     id: "expense-jpy-reporting",
@@ -338,7 +338,7 @@ describe("All Groups reporting currency", () => {
 
   it("lists older records that do not have a compatible reporting rate", () => {
     const legacy = { ...converted, reportingCurrency: undefined, baseToReportingRate: undefined, amountReporting: undefined };
-    expect(recordsMissingReportingRate([legacy], "CAD").map((expense) => expense.id)).toEqual([legacy.id]);
+    expect(recordsMissingReportingRate([legacy], "CAD").map((record) => record.id)).toEqual([legacy.id]);
     expect(recordsMissingReportingRate([legacy], "JPY")).toEqual([]);
   });
 });
@@ -347,10 +347,10 @@ describe("group and event hierarchy", () => {
   it("keeps every event inside an existing group", () => {
     expect(seedSnapshot.groups.map((group) => group.name)).toEqual(expect.arrayContaining(["Moshi Family", "Roommates"]));
     expect(seedSnapshot.events.every((event) => seedSnapshot.groups.some((group) => group.id === event.groupId))).toBe(true);
-    expect(seedSnapshot.expenses.filter((expense) => expense.groupId).every((expense) => seedSnapshot.groups.some((group) => group.id === expense.groupId))).toBe(true);
-    expect(seedSnapshot.expenses.filter((expense) => expense.eventId).every((expense) => seedSnapshot.events.some((event) => event.id === expense.eventId && event.groupId === expense.groupId))).toBe(true);
-    expect(seedSnapshot.expenses.some((expense) => !expense.eventId)).toBe(true);
-    expect(seedSnapshot.expenses.some((expense) => !expense.groupId && !expense.eventId && expense.payerId === seedSnapshot.currentUser.id)).toBe(true);
+    expect(seedSnapshot.records.filter((record) => record.groupId).every((record) => seedSnapshot.groups.some((group) => group.id === record.groupId))).toBe(true);
+    expect(seedSnapshot.records.filter((record) => record.eventId).every((record) => seedSnapshot.events.some((event) => event.id === record.eventId && event.groupId === record.groupId))).toBe(true);
+    expect(seedSnapshot.records.some((record) => !record.eventId)).toBe(true);
+    expect(seedSnapshot.records.some((record) => !record.groupId && !record.eventId && record.payerId === seedSnapshot.currentUser.id)).toBe(true);
     expect(seedSnapshot.events.every((event) => {
       const approvedUsers = new Set(seedSnapshot.groupMembers.filter((member) => member.groupId === event.groupId).map((member) => member.userId));
       const eventUsers = new Set(seedSnapshot.members.filter((member) => member.eventId === event.id && member.status === "active").map((member) => member.userId));
@@ -362,13 +362,13 @@ describe("group and event hierarchy", () => {
 
 describe("Insight scope", () => {
   it("shows all Group expenses or narrows every result to one Event", () => {
-    const familyExpenses = seedSnapshot.expenses.filter((expense) => expenseMatchesInsightScope(expense, "group-family"));
-    const torontoExpenses = seedSnapshot.expenses.filter((expense) => expenseMatchesInsightScope(expense, "group-family", "event-toronto"));
+    const familyRecords = seedSnapshot.records.filter((record) => recordMatchesInsightScope(record, "group-family"));
+    const torontoRecords = seedSnapshot.records.filter((record) => recordMatchesInsightScope(record, "group-family", "event-toronto"));
 
-    expect(familyExpenses.length).toBeGreaterThan(torontoExpenses.length);
-    expect(familyExpenses.every((expense) => expense.groupId === "group-family" && expense.recordType === "expense")).toBe(true);
-    expect(torontoExpenses.length).toBeGreaterThan(0);
-    expect(torontoExpenses.every((expense) => expense.eventId === "event-toronto")).toBe(true);
+    expect(familyRecords.length).toBeGreaterThan(torontoRecords.length);
+    expect(familyRecords.every((record) => record.groupId === "group-family" && record.recordType === "expense")).toBe(true);
+    expect(torontoRecords.length).toBeGreaterThan(0);
+    expect(torontoRecords.every((record) => record.eventId === "event-toronto")).toBe(true);
   });
 });
 
@@ -381,8 +381,8 @@ describe("group lifecycle", () => {
     const deleted = deleteGroupData(seedSnapshot, "group-family", "user-tom");
     expect(deleted.groups.some((group) => group.id === "group-family")).toBe(false);
     expect(deleted.events.some((event) => event.groupId === "group-family")).toBe(false);
-    expect(deleted.expenses.some((expense) => expense.groupId === "group-family")).toBe(false);
-    expect(deleted.expenses.some((expense) => !expense.groupId)).toBe(true);
+    expect(deleted.records.some((record) => record.groupId === "group-family")).toBe(false);
+    expect(deleted.records.some((record) => !record.groupId)).toBe(true);
     expect(deleted.groups.some((group) => group.id === "group-roommates")).toBe(true);
   });
 
@@ -412,16 +412,16 @@ describe("Myself records", () => {
   });
 
   it("includes paid, split, created, and settlement records involving the current user", () => {
-    const expense = seedSnapshot.expenses[0];
-    expect(expenseRelatedToUser(expense, seedSnapshot.currentUser.id, myMemberIds)).toBe(true);
+    const record = seedSnapshot.records[0];
+    expect(recordRelatedToUser(record, seedSnapshot.currentUser.id, myMemberIds)).toBe(true);
 
-    const unrelatedExpense = {
-      ...expense,
+    const unrelatedRecord = {
+      ...record,
       createdBy: "user-someone-else",
       payerId: "member-someone-else",
-      splits: expense.splits.map((split) => ({ ...split, memberId: `other-${split.memberId}` })),
+      splits: record.splits.map((split) => ({ ...split, memberId: `other-${split.memberId}` })),
     };
-    expect(expenseRelatedToUser(unrelatedExpense, seedSnapshot.currentUser.id, myMemberIds)).toBe(false);
+    expect(recordRelatedToUser(unrelatedRecord, seedSnapshot.currentUser.id, myMemberIds)).toBe(false);
 
     const settlement: Settlement = {
       id: "settlement-mine",
@@ -442,33 +442,33 @@ describe("Myself records", () => {
   });
 
   it("keeps the personal-only scope distinct from grouped records", () => {
-    const personal = seedSnapshot.expenses.filter((expense) => !expense.groupId);
-    const groupedRelated = seedSnapshot.expenses.filter((expense) => expense.groupId && expenseRelatedToUser(expense, seedSnapshot.currentUser.id, myMemberIds));
+    const personal = seedSnapshot.records.filter((record) => !record.groupId);
+    const groupedRelated = seedSnapshot.records.filter((record) => record.groupId && recordRelatedToUser(record, seedSnapshot.currentUser.id, myMemberIds));
 
     expect(personal).toHaveLength(1);
     expect(personal[0].payerId).toBe(seedSnapshot.currentUser.id);
     expect(personal[0].eventId).toBeUndefined();
     expect(personal[0].splits.map((split) => split.memberId)).toEqual([seedSnapshot.currentUser.id]);
     expect(groupedRelated.length).toBeGreaterThan(0);
-    expect(groupedRelated.every((expense) => Boolean(expense.groupId))).toBe(true);
+    expect(groupedRelated.every((record) => Boolean(record.groupId))).toBe(true);
   });
 
   it("includes personal and group expenses in the combined all-contexts filter", () => {
-    const combined = seedSnapshot.expenses.filter((expense) => expenseMatchesRecordContext(expense, "all"));
-    const personal = combined.filter((expense) => !expense.groupId);
-    const grouped = combined.filter((expense) => expense.groupId);
+    const combined = seedSnapshot.records.filter((record) => recordMatchesRecordContext(record, "all"));
+    const personal = combined.filter((record) => !record.groupId);
+    const grouped = combined.filter((record) => record.groupId);
 
-    expect(combined).toHaveLength(seedSnapshot.expenses.length);
+    expect(combined).toHaveLength(seedSnapshot.records.length);
     expect(personal.length).toBeGreaterThan(0);
     expect(grouped.length).toBeGreaterThan(0);
-    expect(seedSnapshot.expenses.filter((expense) => expenseMatchesRecordContext(expense, "personal"))).toEqual(personal);
+    expect(seedSnapshot.records.filter((record) => recordMatchesRecordContext(record, "personal"))).toEqual(personal);
   });
 
   it("keeps a current-group record filter inside that group", () => {
-    const familyRecords = seedSnapshot.expenses.filter((expense) => expenseMatchesRecordContext(expense, "group-family"));
+    const familyRecords = seedSnapshot.records.filter((record) => recordMatchesRecordContext(record, "group-family"));
 
     expect(familyRecords.length).toBeGreaterThan(0);
-    expect(familyRecords.every((expense) => expense.groupId === "group-family")).toBe(true);
-    expect(familyRecords.some((expense) => !expense.groupId)).toBe(false);
+    expect(familyRecords.every((record) => record.groupId === "group-family")).toBe(true);
+    expect(familyRecords.some((record) => !record.groupId)).toBe(false);
   });
 });

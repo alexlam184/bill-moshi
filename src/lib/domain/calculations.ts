@@ -2,8 +2,8 @@ import type {
   BillEvent,
   CurrencyCode,
   EventMember,
-  Expense,
-  ExpenseSplit,
+  LedgerRecord,
+  RecordSplit,
   GroupMember,
   Settlement,
   SplitMethod,
@@ -38,14 +38,14 @@ export function memberIdsForUser(
   ]);
 }
 
-export function expenseRelatedToUser(
-  expense: Expense,
+export function recordRelatedToUser(
+  record: LedgerRecord,
   userId: string,
   memberIds: ReadonlySet<string>,
 ) {
-  return expense.createdBy === userId
-    || memberIds.has(expense.payerId)
-    || expense.splits.some((split) => memberIds.has(split.memberId));
+  return record.createdBy === userId
+    || memberIds.has(record.payerId)
+    || record.splits.some((split) => memberIds.has(split.memberId));
 }
 
 export function settlementRelatedToUser(
@@ -58,20 +58,20 @@ export function settlementRelatedToUser(
     || memberIds.has(settlement.toMemberId);
 }
 
-export function expenseMatchesRecordContext(expense: Expense, contextId: string) {
+export function recordMatchesRecordContext(record: LedgerRecord, contextId: string) {
   if (contextId === "all") return true;
-  if (contextId === "personal") return !expense.groupId;
-  return expense.groupId === contextId;
+  if (contextId === "personal") return !record.groupId;
+  return record.groupId === contextId;
 }
 
-export function expenseMatchesInsightScope(
-  expense: Expense,
+export function recordMatchesInsightScope(
+  record: LedgerRecord,
   contextId: string,
   eventId = "all",
 ) {
-  return expense.recordType === "expense"
-    && expenseMatchesRecordContext(expense, contextId)
-    && (eventId === "all" || expense.eventId === eventId);
+  return record.recordType === "expense"
+    && recordMatchesRecordContext(record, contextId)
+    && (eventId === "all" || record.eventId === eventId);
 }
 
 export function userIdForMember(
@@ -85,13 +85,13 @@ export function userIdForMember(
 
 function applyRecordBalance(
   balances: Map<string, number>,
-  expense: Expense,
+  record: LedgerRecord,
   payerId: string | undefined,
   splitId: (memberId: string) => string | undefined = (memberId) => memberId,
 ) {
-  const direction = expense.recordType === "income" ? -1 : 1;
-  if (payerId) balances.set(payerId, (balances.get(payerId) ?? 0) + expense.amountBase * direction);
-  for (const split of expense.splits) {
+  const direction = record.recordType === "income" ? -1 : 1;
+  if (payerId) balances.set(payerId, (balances.get(payerId) ?? 0) + record.amountBase * direction);
+  for (const split of record.splits) {
     const memberId = splitId(split.memberId);
     if (memberId) balances.set(memberId, (balances.get(memberId) ?? 0) - split.owedAmount * direction);
   }
@@ -103,7 +103,7 @@ export function groupNetBalancesByUser(
   events: BillEvent[],
   eventMembers: EventMember[],
   groupMembers: GroupMember[],
-  expenses: Expense[],
+  records: LedgerRecord[],
   settlements: Settlement[],
 ) {
   const balances = new Map(
@@ -112,9 +112,9 @@ export function groupNetBalancesByUser(
       .map((member) => [member.userId, 0]),
   );
 
-  for (const expense of expenses.filter((item) => item.groupId === groupId && item.baseCurrency === currency)) {
-    const payerUserId = userIdForMember(expense.payerId, eventMembers, groupMembers);
-    applyRecordBalance(balances, expense, payerUserId, (memberId) => userIdForMember(memberId, eventMembers, groupMembers));
+  for (const record of records.filter((item) => item.groupId === groupId && item.baseCurrency === currency)) {
+    const payerUserId = userIdForMember(record.payerId, eventMembers, groupMembers);
+    applyRecordBalance(balances, record, payerUserId, (memberId) => userIdForMember(memberId, eventMembers, groupMembers));
   }
 
   for (const settlement of settlements.filter((item) => item.currency === currency)) {
@@ -138,14 +138,14 @@ export function groupCurrencyBalancesForUser(
   events: BillEvent[],
   eventMembers: EventMember[],
   groupMembers: GroupMember[],
-  expenses: Expense[],
+  records: LedgerRecord[],
   settlements: Settlement[],
 ) {
   const groupEvents = events.filter((event) => event.groupId === groupId);
   const groupEventIds = new Set(groupEvents.map((event) => event.id));
   const currencies = new Set<CurrencyCode>([
     ...groupEvents.map((event) => event.baseCurrency),
-    ...expenses.filter((expense) => expense.groupId === groupId).map((expense) => expense.baseCurrency),
+    ...records.filter((record) => record.groupId === groupId).map((record) => record.baseCurrency),
     ...settlements
       .filter((settlement) => settlement.events.some((allocation) => groupEventIds.has(allocation.eventId)))
       .map((settlement) => settlement.currency),
@@ -160,26 +160,26 @@ export function groupCurrencyBalancesForUser(
         events,
         eventMembers,
         groupMembers,
-        expenses,
+        records,
         settlements,
       ).get(userId) ?? 0, currency),
     }))
     .filter(({ balance }) => balance !== 0);
 }
 
-export function expenseReportingRate(expense: Expense, reportingCurrency: CurrencyCode) {
-  if (expense.baseCurrency === reportingCurrency) return 1;
+export function recordReportingRate(record: LedgerRecord, reportingCurrency: CurrencyCode) {
+  if (record.baseCurrency === reportingCurrency) return 1;
   if (
-    expense.reportingCurrency === reportingCurrency
-    && typeof expense.baseToReportingRate === "number"
-    && Number.isFinite(expense.baseToReportingRate)
-    && expense.baseToReportingRate > 0
-  ) return expense.baseToReportingRate;
+    record.reportingCurrency === reportingCurrency
+    && typeof record.baseToReportingRate === "number"
+    && Number.isFinite(record.baseToReportingRate)
+    && record.baseToReportingRate > 0
+  ) return record.baseToReportingRate;
   return undefined;
 }
 
-export function recordsMissingReportingRate(expenses: Expense[], reportingCurrency: CurrencyCode) {
-  return expenses.filter((expense) => expenseReportingRate(expense, reportingCurrency) === undefined);
+export function recordsMissingReportingRate(records: LedgerRecord[], reportingCurrency: CurrencyCode) {
+  return records.filter((record) => recordReportingRate(record, reportingCurrency) === undefined);
 }
 
 export function overallReportingBalanceForUser(
@@ -187,23 +187,23 @@ export function overallReportingBalanceForUser(
   reportingCurrency: CurrencyCode,
   eventMembers: EventMember[],
   groupMembers: GroupMember[],
-  expenses: Expense[],
+  records: LedgerRecord[],
   settlements: Settlement[],
 ) {
   const missingRecordIds: string[] = [];
   let balance = 0;
 
-  for (const expense of expenses) {
-    const reportingRate = expenseReportingRate(expense, reportingCurrency);
+  for (const record of records) {
+    const reportingRate = recordReportingRate(record, reportingCurrency);
     if (reportingRate === undefined) {
-      missingRecordIds.push(expense.id);
+      missingRecordIds.push(record.id);
       continue;
     }
-    const direction = expense.recordType === "income" ? -1 : 1;
-    const payerUserId = userIdForMember(expense.payerId, eventMembers, groupMembers)
-      ?? (expense.payerId === userId ? userId : undefined);
-    let recordBalance = payerUserId === userId ? expense.amountBase * direction : 0;
-    for (const split of expense.splits) {
+    const direction = record.recordType === "income" ? -1 : 1;
+    const payerUserId = userIdForMember(record.payerId, eventMembers, groupMembers)
+      ?? (record.payerId === userId ? userId : undefined);
+    let recordBalance = payerUserId === userId ? record.amountBase * direction : 0;
+    for (const split of record.splits) {
       const splitUserId = userIdForMember(split.memberId, eventMembers, groupMembers)
         ?? (split.memberId === userId ? userId : undefined);
       if (splitUserId === userId) recordBalance -= split.owedAmount * direction;
@@ -243,11 +243,11 @@ export function groupSpendingByDay(
   userId: string,
   eventMembers: EventMember[],
   groupMembers: GroupMember[],
-  expenses: Expense[],
+  records: LedgerRecord[],
   dayCount = 7,
 ): GroupSpendingDay[] {
-  const matchingExpenses = expenses.filter((expense) => expense.recordType === "expense" && expense.groupId === groupId && expense.baseCurrency === currency);
-  const latestDate = matchingExpenses.map((expense) => expense.transactionDate.slice(0, 10)).sort().at(-1)
+  const matchingRecords = records.filter((record) => record.recordType === "expense" && record.groupId === groupId && record.baseCurrency === currency);
+  const latestDate = matchingRecords.map((record) => record.transactionDate.slice(0, 10)).sort().at(-1)
     ?? new Date().toISOString().slice(0, 10);
   const endDate = new Date(`${latestDate}T12:00:00.000Z`);
 
@@ -255,13 +255,13 @@ export function groupSpendingByDay(
     const date = new Date(endDate);
     date.setUTCDate(endDate.getUTCDate() - (dayCount - index - 1));
     const dateKey = date.toISOString().slice(0, 10);
-    const daily = matchingExpenses.filter((expense) => expense.transactionDate.slice(0, 10) === dateKey);
+    const daily = matchingRecords.filter((record) => record.transactionDate.slice(0, 10) === dateKey);
     return {
       date: dateKey,
-      groupAmount: roundMoney(daily.reduce((sum, expense) => sum + expense.amountBase, 0), currency),
+      groupAmount: roundMoney(daily.reduce((sum, record) => sum + record.amountBase, 0), currency),
       myAmount: roundMoney(daily
-        .filter((expense) => userIdForMember(expense.payerId, eventMembers, groupMembers) === userId)
-        .reduce((sum, expense) => sum + expense.amountBase, 0), currency),
+        .filter((record) => userIdForMember(record.payerId, eventMembers, groupMembers) === userId)
+        .reduce((sum, record) => sum + record.amountBase, 0), currency),
     };
   });
 }
@@ -272,12 +272,12 @@ export interface SplitInput {
 }
 
 export function allocateSplits(
-  expenseId: string,
+  recordId: string,
   total: number,
   currency: CurrencyCode,
   method: SplitMethod,
   inputs: SplitInput[],
-): ExpenseSplit[] {
+): RecordSplit[] {
   if (total <= 0 || inputs.length === 0) {
     throw new Error("Select at least one member and enter an amount above zero.");
   }
@@ -292,7 +292,7 @@ export function allocateSplits(
     raw = inputs.map((input) => input.value ?? 0);
     const allocated = roundMoney(raw.reduce((sum, value) => sum + value, 0), currency);
     if (Math.abs(allocated - roundMoney(total, currency)) >= unit) {
-      throw new Error("Exact amounts must add up to the expense total.");
+      throw new Error("Exact amounts must add up to the record total.");
     }
   } else if (method === "percentage") {
     const percentage = inputs.reduce((sum, input) => sum + (input.value ?? 0), 0);
@@ -311,7 +311,7 @@ export function allocateSplits(
   rounded[0] = roundMoney(rounded[0] + remainder, currency);
 
   return inputs.map((input, index) => ({
-    expenseId,
+    recordId,
     memberId: input.memberId,
     splitMethod: method,
     owedAmount: rounded[index],
@@ -323,15 +323,15 @@ export function allocateSplits(
 export function eventNetBalances(
   eventId: string,
   members: EventMember[],
-  expenses: Expense[],
+  records: LedgerRecord[],
   settlements: Settlement[],
 ) {
   const balances = new Map(
     members.filter((member) => member.eventId === eventId).map((member) => [member.id, 0]),
   );
 
-  for (const expense of expenses.filter((item) => item.eventId === eventId)) {
-    applyRecordBalance(balances, expense, expense.payerId);
+  for (const record of records.filter((item) => item.eventId === eventId)) {
+    applyRecordBalance(balances, record, record.payerId);
   }
 
   for (const settlement of settlements) {
@@ -358,7 +358,7 @@ export function groupDailyNetBalances(
   groupId: string,
   currency: CurrencyCode,
   members: GroupMember[],
-  expenses: Expense[],
+  records: LedgerRecord[],
 ) {
   const balances = new Map(
     members
@@ -366,10 +366,10 @@ export function groupDailyNetBalances(
       .map((member) => [member.id, 0]),
   );
 
-  for (const expense of expenses.filter(
+  for (const record of records.filter(
     (item) => item.groupId === groupId && !item.eventId && item.baseCurrency === currency,
   )) {
-    applyRecordBalance(balances, expense, expense.payerId);
+    applyRecordBalance(balances, record, record.payerId);
   }
 
   return balances;
@@ -413,21 +413,21 @@ export function simplifyBalances(
   return debts;
 }
 
-export function totalEventSpending(eventId: string, expenses: Expense[]) {
-  return expenses
-    .filter((expense) => expense.recordType === "expense" && expense.eventId === eventId)
-    .reduce((sum, expense) => sum + expense.amountBase, 0);
+export function totalEventSpending(eventId: string, records: LedgerRecord[]) {
+  return records
+    .filter((record) => record.recordType === "expense" && record.eventId === eventId)
+    .reduce((sum, record) => sum + record.amountBase, 0);
 }
 
 export function totalGroupDailySpending(
   groupId: string,
   currency: CurrencyCode,
-  expenses: Expense[],
+  records: LedgerRecord[],
 ) {
-  return expenses
+  return records
     .filter(
-      (expense) =>
-        expense.recordType === "expense" && expense.groupId === groupId && !expense.eventId && expense.baseCurrency === currency,
+      (record) =>
+        record.recordType === "expense" && record.groupId === groupId && !record.eventId && record.baseCurrency === currency,
     )
-    .reduce((sum, expense) => sum + expense.amountBase, 0);
+    .reduce((sum, record) => sum + record.amountBase, 0);
 }

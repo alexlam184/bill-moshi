@@ -9,7 +9,7 @@ type OperationPayload = {
   group?: { id?: string };
   groupMember?: { groupId?: string };
   event?: { groupId?: string };
-  expense?: { groupId?: string };
+  record?: { groupId?: string };
   settlement?: { events?: Array<{ eventId?: string }> };
   invitation?: { groupId?: string };
   request?: { groupId?: string };
@@ -48,12 +48,12 @@ export function operationWorkspaceScope(
   operation: PendingOperation,
   eventGroupIds?: EventGroupLookup,
 ): WorkspaceScope {
-  if (["user_settings", "debt_record", "category"].includes(operation.entityType)) {
+  if (["user_settings", "debt_record", "category", "recurring_payment"].includes(operation.entityType)) {
     return { kind: "personal" };
   }
 
   const payload = operation.payload as OperationPayload;
-  if (operation.entityType === "expense" && !payload.expense?.groupId && !payload.groupId) {
+  if (operation.entityType === "record" && !payload.record?.groupId && !payload.groupId) {
     return { kind: "personal" };
   }
 
@@ -70,7 +70,7 @@ export function operationWorkspaceScope(
     ?? payload.group?.id
     ?? payload.groupMember?.groupId
     ?? payload.event?.groupId
-    ?? payload.expense?.groupId
+    ?? payload.record?.groupId
     ?? payload.invitation?.groupId
     ?? payload.request?.groupId
     ?? settlementGroupIds.values().next().value;

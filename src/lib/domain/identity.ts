@@ -32,13 +32,14 @@ export function bindSnapshotIdentity(
       name: identity.name,
       email: identity.email,
     } : member),
-    expenses: snapshot.expenses.map((expense) => ({
-      ...expense,
-      payerId: replace(expense.payerId),
-      createdBy: replace(expense.createdBy),
-      splits: expense.splits.map((split) => ({ ...split, memberId: replace(split.memberId) })),
+    records: snapshot.records.map((record) => ({
+      ...record,
+      payerId: replace(record.payerId),
+      createdBy: replace(record.createdBy),
+      splits: record.splits.map((split) => ({ ...split, memberId: replace(split.memberId) })),
     })),
     debtRecords: snapshot.debtRecords.map((record) => ({ ...record, createdBy: replace(record.createdBy) })),
+    recurringPayments: (snapshot.recurringPayments ?? []).map((payment) => ({ ...payment, createdBy: replace(payment.createdBy) })),
     settlements: snapshot.settlements.map((settlement) => ({
       ...settlement,
       fromMemberId: replace(settlement.fromMemberId),

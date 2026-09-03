@@ -1,4 +1,4 @@
-import type { CurrencyCode, Expense } from "./types";
+import type { CurrencyCode, LedgerRecord } from "./types";
 import { dateFilterRange, dateInRange, type DateFilterPreset, type DateFilterRange } from "./date-filter";
 
 export type InsightLedger = "group" | "myself";
@@ -14,11 +14,11 @@ export interface InsightSummary {
 
 export const insightDateRange = dateFilterRange;
 
-export function recordInInsightDateRange(record: Expense, range: InsightDateRange) {
+export function recordInInsightDateRange(record: LedgerRecord, range: InsightDateRange) {
   return dateInRange(record.transactionDate, range);
 }
 
-export function recordsForInsightScope(records: Expense[], ledger: InsightLedger, groupId?: string, eventId?: string) {
+export function recordsForInsightScope(records: LedgerRecord[], ledger: InsightLedger, groupId?: string, eventId?: string) {
   if (ledger === "myself") return records.filter((record) => !record.groupId && !record.eventId);
   return records.filter((record) => {
     if (!record.groupId) return false;
@@ -28,7 +28,7 @@ export function recordsForInsightScope(records: Expense[], ledger: InsightLedger
   });
 }
 
-export function summarizeInsightRecords(records: Expense[], currency: CurrencyCode): InsightSummary {
+export function summarizeInsightRecords(records: LedgerRecord[], currency: CurrencyCode): InsightSummary {
   return records
     .filter((record) => record.baseCurrency === currency)
     .reduce<InsightSummary>((summary, record) => {

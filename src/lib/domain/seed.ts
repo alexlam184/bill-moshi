@@ -1,10 +1,10 @@
 import { defaultCategories } from "./categories";
 import { allocateSplits } from "./calculations";
-import type { AppSnapshot, Expense } from "./types";
+import type { AppSnapshot, LedgerRecord } from "./types";
 
 const now = "2026-08-10T17:00:00.000Z";
 
-function expense(
+function record(
   id: string,
   description: string,
   categoryId: string,
@@ -12,7 +12,7 @@ function expense(
   amount: number,
   date: string,
   memberIds: string[],
-): Expense {
+): LedgerRecord {
   return {
     id,
     recordType: "expense",
@@ -62,10 +62,10 @@ export const seedSnapshot: AppSnapshot = {
     },
   ],
   groupMembers: [
-    { id: "group-member-tom-family", groupId: "group-family", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "#2F80ED" },
-    { id: "group-member-alex-family", groupId: "group-family", userId: "user-alex", name: "Alex", email: "alex@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "#9B51E0" },
-    { id: "group-member-blair-family", groupId: "group-family", userId: "user-blair", name: "Blair", email: "blair@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "#F2994A" },
-    { id: "group-member-tom-roommates", groupId: "group-roommates", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "#2F80ED" },
+    { id: "group-member-tom-family", groupId: "group-family", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-brand)" },
+    { id: "group-member-alex-family", groupId: "group-family", userId: "user-alex", name: "Alex", email: "alex@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-purple)" },
+    { id: "group-member-blair-family", groupId: "group-family", userId: "user-blair", name: "Blair", email: "blair@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-orange)" },
+    { id: "group-member-tom-roommates", groupId: "group-roommates", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-brand)" },
   ],
   events: [
     {
@@ -96,15 +96,15 @@ export const seedSnapshot: AppSnapshot = {
     },
   ],
   members: [
-    { id: "member-tom", eventId: "event-toronto", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "#2F80ED" },
-    { id: "member-alex", eventId: "event-toronto", userId: "user-alex", name: "Alex", email: "alex@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "#9B51E0" },
-    { id: "member-blair", eventId: "event-toronto", userId: "user-blair", name: "Blair", email: "blair@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "#F2994A" },
-    { id: "member-tom-jp", eventId: "event-japan", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "#2F80ED" },
-    { id: "member-alex-jp", eventId: "event-japan", userId: "user-alex", name: "Alex", email: "alex@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "#9B51E0" },
-    { id: "member-blair-jp", eventId: "event-japan", userId: "user-blair", name: "Blair", email: "blair@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "#F2994A" },
+    { id: "member-tom", eventId: "event-toronto", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-brand)" },
+    { id: "member-alex", eventId: "event-toronto", userId: "user-alex", name: "Alex", email: "alex@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-purple)" },
+    { id: "member-blair", eventId: "event-toronto", userId: "user-blair", name: "Blair", email: "blair@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-orange)" },
+    { id: "member-tom-jp", eventId: "event-japan", userId: "user-tom", name: "Tom", email: "tom@example.com", role: "owner", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-brand)" },
+    { id: "member-alex-jp", eventId: "event-japan", userId: "user-alex", name: "Alex", email: "alex@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-purple)" },
+    { id: "member-blair-jp", eventId: "event-japan", userId: "user-blair", name: "Blair", email: "blair@example.com", role: "member", status: "active", joinedAt: now, avatarColor: "var(--color-avatar-orange)" },
   ],
   categories: defaultCategories,
-  expenses: [
+  records: [
     {
       id: "expense-personal-coffee",
       recordType: "expense",
@@ -154,12 +154,13 @@ export const seedSnapshot: AppSnapshot = {
         ),
       ),
     },
-    expense("expense-hotel", "Chelsea Hotel", "accommodation", "member-tom", 420, "2026-09-20T18:00:00.000Z", ["member-tom", "member-alex", "member-blair"]),
-    expense("expense-rail", "VIA Rail", "public-transport", "member-alex", 85.2, "2026-09-21T13:30:00.000Z", ["member-tom", "member-alex", "member-blair"]),
-    expense("expense-dinner", "Dinner at Pai", "food", "member-tom", 82.4, "2026-09-21T23:00:00.000Z", ["member-tom", "member-alex", "member-blair"]),
-    expense("expense-uber", "Uber to CN Tower", "taxi", "member-blair", 26.12, "2026-09-22T15:10:00.000Z", ["member-tom", "member-alex", "member-blair"]),
+    record("expense-hotel", "Chelsea Hotel", "accommodation", "member-tom", 420, "2026-09-20T18:00:00.000Z", ["member-tom", "member-alex", "member-blair"]),
+    record("expense-rail", "VIA Rail", "public-transport", "member-alex", 85.2, "2026-09-21T13:30:00.000Z", ["member-tom", "member-alex", "member-blair"]),
+    record("expense-dinner", "Dinner at Pai", "food", "member-tom", 82.4, "2026-09-21T23:00:00.000Z", ["member-tom", "member-alex", "member-blair"]),
+    record("expense-uber", "Uber to CN Tower", "taxi", "member-blair", 26.12, "2026-09-22T15:10:00.000Z", ["member-tom", "member-alex", "member-blair"]),
   ],
   debtRecords: [],
+  recurringPayments: [],
   settlements: [],
   invitations: [
     {
@@ -188,6 +189,7 @@ export const seedSnapshot: AppSnapshot = {
   ],
   activity: [
     { id: "activity-1", groupId: "group-family", actorId: "user-sam", type: "join_requested", title: "Sam requested to join", detail: "Waiting for owner approval", createdAt: "2026-08-10T16:15:00.000Z" },
-    { id: "activity-2", eventId: "event-toronto", actorId: "user-tom", type: "expense_created", title: "Dinner at Pai added", detail: "Tom paid CA$82.40", createdAt: "2026-09-21T23:00:00.000Z" },
+    { id: "activity-2", eventId: "event-toronto", actorId: "user-tom", type: "record_created", title: "Dinner at Pai added", detail: "Tom paid CA$82.40", createdAt: "2026-09-21T23:00:00.000Z" },
   ],
+  groupDeletionNotices: [],
 };
