@@ -26,7 +26,7 @@ export function InsightsScreen() {
   const selectedEventScope = ledger === "group" && currentGroup && groupEvents.some((event) => event.id === eventScope) ? eventScope : "all";
   const selectedEvent = groupEvents.find((event) => event.id === selectedEventScope);
   const contextRecords = recordsForInsightScope(
-    snapshot.expenses,
+    snapshot.records,
     ledger,
     ledger === "group" ? currentGroup?.id : undefined,
     selectedEventScope === "all" ? undefined : selectedEventScope,
@@ -39,9 +39,9 @@ export function InsightsScreen() {
   const selectedCurrency = availableCurrencies.includes(currency) ? currency : availableCurrencies[0];
   const records = dateRecords.filter((record) => record.baseCurrency === selectedCurrency);
   const summary = summarizeInsightRecords(dateRecords, selectedCurrency);
-  const expenses = records.filter((record) => record.recordType === "expense");
+  const spendingRecords = records.filter((record) => record.recordType === "expense");
   const categoryTotals = snapshot.categories
-    .map((category) => ({ category, total: expenses.filter((record) => record.categoryId === category.id).reduce((sum, record) => sum + record.amountBase, 0) }))
+    .map((category) => ({ category, total: spendingRecords.filter((record) => record.categoryId === category.id).reduce((sum, record) => sum + record.amountBase, 0) }))
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total);
   const visibleEvents = ledger === "group" ? snapshot.events.filter((event) => {
@@ -50,12 +50,12 @@ export function InsightsScreen() {
     return event.baseCurrency === selectedCurrency;
   }) : [];
   const eventTotals = visibleEvents
-    .map((event) => ({ event, total: expenses.filter((record) => record.eventId === event.id).reduce((sum, record) => sum + record.amountBase, 0) }))
+    .map((event) => ({ event, total: spendingRecords.filter((record) => record.eventId === event.id).reduce((sum, record) => sum + record.amountBase, 0) }))
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total);
   const visibleGroups = ledger === "myself" ? [] : currentGroup ? [currentGroup] : snapshot.groups;
   const dailyTotals = visibleGroups
-    .map((group) => ({ group, total: expenses.filter((record) => record.groupId === group.id && !record.eventId).reduce((sum, record) => sum + record.amountBase, 0) }))
+    .map((group) => ({ group, total: spendingRecords.filter((record) => record.groupId === group.id && !record.eventId).reduce((sum, record) => sum + record.amountBase, 0) }))
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total);
   const subtitle = ledger === "myself"
@@ -102,13 +102,13 @@ export function InsightsScreen() {
       </section>
 
       <section>
-        <div className="mb-3"><h2 className="text-lg font-extrabold">Expense by category</h2><p className="mt-1 text-xs text-muted">Proportion of Expense only; Income and Transfers are excluded.</p></div>
-        <Card className="p-5">{categoryTotals.length === 0 ? <EmptyState icon={<PieChartIcon size={24} />} title="No Expense Data" body={`No ${selectedCurrency} expenses match this scope and date filter.`} /> : <div className="grid items-center gap-6 md:grid-cols-[230px_1fr]"><CategoryDonut items={categoryTotals} total={summary.expense} currency={selectedCurrency} /><div className="grid gap-3">{categoryTotals.map(({ category, total }, index) => { const percentage = summary.expense ? total / summary.expense * 100 : 0; return <div key={category.id} className="flex items-center gap-3"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: categoryColors[index % categoryColors.length] }} /><span className="text-lg" aria-hidden="true">{category.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{category.name}</p><p className="mt-0.5 text-xs text-muted">{formatPercentage(percentage)}</p></div><p className="shrink-0 text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></div>; })}</div></div>}</Card>
+        <div className="mb-3"><h2 className="text-lg font-extrabold">LedgerRecord by category</h2><p className="mt-1 text-xs text-muted">Proportion of LedgerRecord only; Income and Transfers are excluded.</p></div>
+        <Card className="p-5">{categoryTotals.length === 0 ? <EmptyState icon={<PieChartIcon size={24} />} title="No LedgerRecord Data" body={`No ${selectedCurrency} expenses match this scope and date filter.`} /> : <div className="grid items-center gap-6 md:grid-cols-[230px_1fr]"><CategoryDonut items={categoryTotals} total={summary.expense} currency={selectedCurrency} /><div className="grid gap-3">{categoryTotals.map(({ category, total }, index) => { const percentage = summary.expense ? total / summary.expense * 100 : 0; return <div key={category.id} className="flex items-center gap-3"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: categoryColors[index % categoryColors.length] }} /><span className="text-lg" aria-hidden="true">{category.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{category.name}</p><p className="mt-0.5 text-xs text-muted">{formatPercentage(percentage)}</p></div><p className="shrink-0 text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></div>; })}</div></div>}</Card>
       </section>
 
-      {dailyTotals.length > 0 && <section><h2 className="mb-3 text-lg font-extrabold">Daily expense by group</h2><Card className="divide-y divide-line overflow-hidden">{dailyTotals.map(({ group, total }) => { const count = expenses.filter((record) => record.groupId === group.id && !record.eventId).length; return <Link key={group.id} href={`/groups/${group.id}`} className="flex items-center gap-3 p-4 hover:bg-slate-50"><span className="grid size-10 place-items-center rounded-xl bg-brand-soft text-xl">{group.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{group.name}</p><p className="mt-0.5 text-xs text-muted">No event · {expenseCountLabel(count)}</p></div><p className="text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></Link>; })}</Card></section>}
+      {dailyTotals.length > 0 && <section><h2 className="mb-3 text-lg font-extrabold">Daily expense by group</h2><Card className="divide-y divide-line overflow-hidden">{dailyTotals.map(({ group, total }) => { const count = records.filter((record) => record.groupId === group.id && !record.eventId).length; return <Link key={group.id} href={`/groups/${group.id}`} className="flex items-center gap-3 p-4 hover:bg-slate-50"><span className="grid size-10 place-items-center rounded-xl bg-brand-soft text-xl">{group.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{group.name}</p><p className="mt-0.5 text-xs text-muted">No event · {recordCountLabel(count)}</p></div><p className="text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></Link>; })}</Card></section>}
 
-      {eventTotals.length > 0 && <section><h2 className="mb-3 text-lg font-extrabold">Expense by event</h2><Card className="divide-y divide-line overflow-hidden">{eventTotals.map(({ event, total }) => { const group = snapshot.groups.find((item) => item.id === event.groupId); const count = expenses.filter((record) => record.eventId === event.id).length; return <Link key={event.id} href={`/events/${event.id}`} className="flex items-center gap-3 p-4 hover:bg-slate-50"><span className="grid size-10 place-items-center rounded-xl bg-brand-soft text-xl">{event.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{event.name}</p><p className="mt-0.5 text-xs text-muted">{group?.emoji} {group?.name} · {expenseCountLabel(count)}</p></div><p className="text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></Link>; })}</Card></section>}
+      {eventTotals.length > 0 && <section><h2 className="mb-3 text-lg font-extrabold">LedgerRecord by event</h2><Card className="divide-y divide-line overflow-hidden">{eventTotals.map(({ event, total }) => { const group = snapshot.groups.find((item) => item.id === event.groupId); const count = records.filter((record) => record.eventId === event.id).length; return <Link key={event.id} href={`/events/${event.id}`} className="flex items-center gap-3 p-4 hover:bg-slate-50"><span className="grid size-10 place-items-center rounded-xl bg-brand-soft text-xl">{event.emoji}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{event.name}</p><p className="mt-0.5 text-xs text-muted">{group?.emoji} {group?.name} · {recordCountLabel(count)}</p></div><p className="text-sm font-extrabold">{formatMoney(total, selectedCurrency)}</p></Link>; })}</Card></section>}
     </div>
   );
 }
@@ -127,7 +127,7 @@ function CategoryDonut({ items, total, currency }: { items: Array<{ category: Ca
     percentage: total ? categoryTotal / total * 100 : 0,
     offset: items.slice(0, index).reduce((sum, item) => sum + (total ? item.total / total * 100 : 0), 0),
   }));
-  return <div className="relative mx-auto grid size-52 place-items-center" role="img" aria-label={`Expense category pie chart totaling ${formatMoney(total, currency)}`}><svg viewBox="0 0 160 160" className="size-full -rotate-90" aria-hidden="true"><circle cx="80" cy="80" r="56" pathLength="100" fill="none" stroke="var(--color-chart-track)" strokeWidth="24" />{segments.map(({ category, percentage, offset }, index) => <circle key={category.id} cx="80" cy="80" r="56" pathLength="100" fill="none" stroke={categoryColors[index % categoryColors.length]} strokeWidth="24" strokeDasharray={`${percentage} ${100 - percentage}`} strokeDashoffset={-offset} />)}</svg><div className="absolute inset-0 grid place-content-center text-center"><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.12em] text-muted">Expense</span><strong className="mt-1 text-lg tracking-tight text-ink">{formatMoney(total, currency)}</strong></div></div>;
+  return <div className="relative mx-auto grid size-52 place-items-center" role="img" aria-label={`LedgerRecord category pie chart totaling ${formatMoney(total, currency)}`}><svg viewBox="0 0 160 160" className="size-full -rotate-90" aria-hidden="true"><circle cx="80" cy="80" r="56" pathLength="100" fill="none" stroke="var(--color-chart-track)" strokeWidth="24" />{segments.map(({ category, percentage, offset }, index) => <circle key={category.id} cx="80" cy="80" r="56" pathLength="100" fill="none" stroke={categoryColors[index % categoryColors.length]} strokeWidth="24" strokeDasharray={`${percentage} ${100 - percentage}`} strokeDashoffset={-offset} />)}</svg><div className="absolute inset-0 grid place-content-center text-center"><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.12em] text-muted">LedgerRecord</span><strong className="mt-1 text-lg tracking-tight text-ink">{formatMoney(total, currency)}</strong></div></div>;
 }
 
 function dateRangeLabel(preset: InsightDatePreset, start?: string, end?: string) {
@@ -146,7 +146,7 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00`));
 }
 
-function expenseCountLabel(count: number) {
+function recordCountLabel(count: number) {
   return `${count} expense${count === 1 ? "" : "s"}`;
 }
 

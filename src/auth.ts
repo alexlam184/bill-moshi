@@ -1,9 +1,10 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import type { JWT } from "next-auth/jwt";
+import { getToken, type JWT } from "next-auth/jwt";
 import { refreshGoogleAccessToken } from "@/lib/integrations/google/oauth";
 
 const googleConfigured = Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET);
+const authSecret = process.env.AUTH_SECRET ?? (!googleConfigured ? "bill-moshi-local-demo-only" : undefined);
 
 async function refreshAccessToken(token: JWT): Promise<JWT> {
   const clientId = process.env.AUTH_GOOGLE_ID;
@@ -31,7 +32,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
 
 export const { handlers, auth } = NextAuth({
   trustHost: true,
-  secret: process.env.AUTH_SECRET ?? (!googleConfigured ? "bill-moshi-local-demo-only" : undefined),
+  secret: authSecret,
   providers: googleConfigured
     ? [
         Google({
@@ -68,9 +69,36 @@ export const { handlers, auth } = NextAuth({
       return refreshAccessToken(token);
     },
     async session({ session, token }) {
-      session.accessToken = typeof token.accessToken === "string" ? token.accessToken : undefined;
+      session.googleConnected = typeof token.accessToken === "string";
       session.authError = token.authError === "RefreshAccessTokenError" ? token.authError : undefined;
       return session;
     },
   },
 });
+
+/**
+ * Reads the encrypted Auth.js JWT only on the server. Google bearer tokens are
+ * deliberately never copied into the browser-visible session response.
+ */
+export async function googleAuth(request: Request) {
+  if (!authSecret) return { accessToken: undefined, authError: "RefreshAccessTokenError" as const, user: undefined };
+  const token = await getToken({
+    req: request,
+    secret: authSecret,
+    secureCookie: new URL(request.url).protocol === "https:",
+  });
+  if (!token) return { accessToken: undefined, authError: undefined, user: undefined };
+  const refreshed = typeof token.accessToken === "string"
+    && (typeof token.accessTokenExpires !== "number" || Date.now() < token.accessTokenExpires - 60_000)
+    ? token
+    : await refreshAccessToken(token);
+  return {
+    accessToken: typeof refreshed.accessToken === "string" ? refreshed.accessToken : undefined,
+    authError: refreshed.authError === "RefreshAccessTokenError" ? refreshed.authError : undefined,
+    user: typeof refreshed.email === "string" ? {
+      email: refreshed.email,
+      name: typeof refreshed.name === "string" ? refreshed.name : refreshed.email,
+      image: typeof refreshed.picture === "string" ? refreshed.picture : undefined,
+    } : undefined,
+  };
+}

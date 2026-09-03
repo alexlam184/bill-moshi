@@ -1,4 +1,4 @@
-import type { CurrencyCode, Expense } from "./types";
+import type { CurrencyCode, LedgerRecord } from "./types";
 
 export interface CalendarDay {
   date: string;
@@ -38,11 +38,11 @@ export function buildMonthGrid(year: number, monthIndex: number): CalendarDay[] 
   });
 }
 
-export function recordsForCalendarScope(records: Expense[], groupId?: string) {
+export function recordsForCalendarScope(records: LedgerRecord[], groupId?: string) {
   return groupId ? records.filter((record) => record.groupId === groupId) : records;
 }
 
-export function calendarDayTotals(records: Expense[], currency: CurrencyCode) {
+export function calendarDayTotals(records: LedgerRecord[], currency: CurrencyCode) {
   const totals = new Map<string, CalendarRecordTotals>();
 
   for (const record of records) {
@@ -56,7 +56,7 @@ export function calendarDayTotals(records: Expense[], currency: CurrencyCode) {
   return totals;
 }
 
-export function calendarMonthTotals(records: Expense[], year: number, monthIndex: number, currency: CurrencyCode) {
+export function calendarMonthTotals(records: LedgerRecord[], year: number, monthIndex: number, currency: CurrencyCode) {
   const prefix = `${year}-${String(monthIndex + 1).padStart(2, "0")}-`;
   const monthRecords = records.filter((record) => transactionDateKey(record.transactionDate).startsWith(prefix));
   const byDay = calendarDayTotals(monthRecords, currency);

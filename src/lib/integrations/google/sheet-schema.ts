@@ -1,11 +1,12 @@
 export const GOOGLE_SHEET_HEADERS = {
+  RecurringPayments: ["recurring_payment_id", "name", "category_id", "amount", "currency", "start_date", "frequency", "interval", "end_date", "next_occurrence", "status", "note", "created_by", "created_at", "updated_at", "version"],
   UserSettings: ["user_id", "email", "default_currency", "updated_at"],
   Groups: ["group_id", "group_name", "emoji", "description", "created_by", "created_at", "updated_at", "notes", "currency"],
   GroupMembers: ["group_member_id", "group_id", "user_id", "name", "email", "role", "status", "joined_at"],
   Events: ["event_id", "group_id", "event_name", "start_date", "end_date", "base_currency", "created_by", "created_at", "updated_at"],
   Members: ["member_id", "event_id", "user_id", "name", "email", "role", "joined_at", "status"],
-  Expenses: ["expense_id", "group_id", "event_id", "description", "category_id", "transaction_date", "payer_id", "amount_original", "currency_original", "exchange_rate", "amount_base", "base_currency", "receipt_file_id", "notes", "created_by", "created_at", "updated_at", "version", "record_type", "exchange_rate_source", "exchange_rate_date", "exchange_rate_provider", "reporting_currency", "base_to_reporting_rate", "amount_reporting", "reporting_rate_source", "reporting_rate_date", "reporting_rate_provider"],
-  ExpenseSplits: ["expense_id", "member_id", "split_method", "owed_amount", "percentage", "shares"],
+  Records: ["record_id", "group_id", "event_id", "description", "category_id", "transaction_date", "payer_id", "amount_original", "currency_original", "exchange_rate", "amount_base", "base_currency", "receipt_file_id", "notes", "created_by", "created_at", "updated_at", "version", "record_type", "exchange_rate_source", "exchange_rate_date", "exchange_rate_provider", "reporting_currency", "base_to_reporting_rate", "amount_reporting", "reporting_rate_source", "reporting_rate_date", "reporting_rate_provider", "recurring_payment_id", "recurring_payment_date"],
+  RecordSplits: ["record_id", "member_id", "split_method", "owed_amount", "percentage", "shares"],
   DebtRecords: ["debt_record_id", "direction", "person_name", "amount", "currency", "date", "due_date", "note", "status", "created_by", "created_at", "updated_at", "name", "photo_file_ids", "photo_names"],
   Settlements: ["settlement_id", "from_member_id", "to_member_id", "amount", "currency", "date", "scope", "payment_method", "note", "created_by", "created_at"],
   SettlementEvents: ["settlement_id", "event_id", "allocated_amount"],
@@ -19,9 +20,9 @@ export const GOOGLE_SHEET_HEADERS = {
 export type SheetName = keyof typeof GOOGLE_SHEET_HEADERS;
 
 export const PERSONAL_SHEET_HEADERS = {
+  RecurringPayments: GOOGLE_SHEET_HEADERS.RecurringPayments,
   UserSettings: GOOGLE_SHEET_HEADERS.UserSettings,
-  Expenses: GOOGLE_SHEET_HEADERS.Expenses,
-  ExpenseSplits: GOOGLE_SHEET_HEADERS.ExpenseSplits,
+  Records: GOOGLE_SHEET_HEADERS.Records,
   DebtRecords: GOOGLE_SHEET_HEADERS.DebtRecords,
   Categories: GOOGLE_SHEET_HEADERS.Categories,
   SyncLog: GOOGLE_SHEET_HEADERS.SyncLog,
@@ -32,8 +33,8 @@ export const GROUP_SHEET_HEADERS = {
   GroupMembers: GOOGLE_SHEET_HEADERS.GroupMembers,
   Events: GOOGLE_SHEET_HEADERS.Events,
   Members: GOOGLE_SHEET_HEADERS.Members,
-  Expenses: GOOGLE_SHEET_HEADERS.Expenses,
-  ExpenseSplits: GOOGLE_SHEET_HEADERS.ExpenseSplits,
+  Records: GOOGLE_SHEET_HEADERS.Records,
+  RecordSplits: GOOGLE_SHEET_HEADERS.RecordSplits,
   Settlements: GOOGLE_SHEET_HEADERS.Settlements,
   SettlementEvents: GOOGLE_SHEET_HEADERS.SettlementEvents,
   Categories: GOOGLE_SHEET_HEADERS.Categories,

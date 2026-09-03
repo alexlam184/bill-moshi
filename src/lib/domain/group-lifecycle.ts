@@ -15,7 +15,7 @@ export function removeGroupData(snapshot: AppSnapshot, groupId: string): AppSnap
     groupMembers: snapshot.groupMembers.filter((member) => member.groupId !== groupId),
     events: snapshot.events.filter((event) => event.groupId !== groupId),
     members: snapshot.members.filter((member) => !eventIds.has(member.eventId)),
-    expenses: snapshot.expenses.filter((expense) => expense.groupId !== groupId),
+    records: snapshot.records.filter((record) => record.groupId !== groupId),
     settlements: snapshot.settlements.flatMap((settlement) => {
       const remainingEvents = settlement.events.filter((allocation) => !eventIds.has(allocation.eventId));
       if (remainingEvents.length === settlement.events.length) return [settlement];
@@ -30,6 +30,26 @@ export function removeGroupData(snapshot: AppSnapshot, groupId: string): AppSnap
     joinRequests: snapshot.joinRequests.filter((request) => request.groupId !== groupId),
     activity: snapshot.activity.filter((entry) => entry.groupId !== groupId && (!entry.eventId || !eventIds.has(entry.eventId))),
   };
+}
+
+export function removeDeletedGroups(
+  snapshot: AppSnapshot,
+  groups: Array<{ id: string; name: string }>,
+  detectedAt = new Date().toISOString(),
+) {
+  let next = snapshot;
+  for (const group of groups) {
+    if (!next.groups.some((item) => item.id === group.id)) continue;
+    next = removeGroupData(next, group.id);
+    next = {
+      ...next,
+      groupDeletionNotices: [
+        { groupId: group.id, groupName: group.name, detectedAt },
+        ...(next.groupDeletionNotices ?? []).filter((notice) => notice.groupId !== group.id),
+      ],
+    };
+  }
+  return next;
 }
 
 export function leaveGroupData(snapshot: AppSnapshot, groupId: string, userId: string): LeaveGroupResult {

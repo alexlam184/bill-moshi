@@ -42,7 +42,7 @@ import { useDialogFocus } from "@/lib/hooks/use-dialog-focus";
 
 export function GroupDashboardScreen({ groupId }: { groupId: string }) {
   const router = useRouter();
-  const { snapshot, hydrated, addExpense, updateGroupNotes, leaveGroup, deleteGroup } = useBillMoshi();
+  const { snapshot, hydrated, addRecord, updateGroupNotes, leaveGroup, deleteGroup } = useBillMoshi();
   const group = snapshot.groups.find((item) => item.id === groupId);
   const [eventsVisibility, setEventsVisibility] = useQueryState<"shown" | "hidden">("events", "shown", ["shown", "hidden"]);
   const eventsOpen = eventsVisibility === "shown";
@@ -62,13 +62,13 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
   const currentGroup = group;
 
   const events = snapshot.events.filter((event) => event.groupId === groupId);
-  const expenses = snapshot.expenses.filter((expense) => expense.groupId === groupId);
-  const dailyExpenses = expenses
-    .filter((expense) => !expense.eventId)
+  const records = snapshot.records.filter((record) => record.groupId === groupId);
+  const dailyRecords = records
+    .filter((record) => !record.eventId)
     .sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
   const groupMembers = snapshot.groupMembers.filter((member) => member.groupId === groupId && member.status === "active");
   const availableCurrencies = [...new Set<CurrencyCode>([
-    ...expenses.map((expense) => expense.baseCurrency),
+    ...records.map((record) => record.baseCurrency),
     ...events.map((event) => event.baseCurrency),
   ])];
   if (availableCurrencies.length === 0) availableCurrencies.push(group.currency);
@@ -79,7 +79,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
     snapshot.currentUser.id,
     snapshot.members,
     snapshot.groupMembers,
-    snapshot.expenses,
+    snapshot.records,
   );
   const spendingValues = spendingDays.map((day) => spendingMode === "group" ? day.groupAmount : day.myAmount);
   const spendingTotal = spendingValues.reduce((sum, value) => sum + value, 0);
@@ -90,7 +90,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
     snapshot.events,
     snapshot.members,
     snapshot.groupMembers,
-    snapshot.expenses,
+    snapshot.records,
     snapshot.settlements,
   );
   const balanceRows = groupMembers
@@ -138,7 +138,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
     setSettlingDebt(true);
     setSettlementError("");
     try {
-      const recordId = await addExpense({
+      const recordId = await addRecord({
         recordType: "transfer",
         groupId: currentGroup.id,
         description: `Debt settlement: ${selectedDebt.from.name} to ${selectedDebt.to.name}`,
@@ -167,7 +167,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
       <PageTitle
         title={`${group.emoji} ${group.name}`}
         subtitle={group.description ?? "A shared space for your events and activities."}
-        action={<div className="flex shrink-0 items-center gap-2"><Link href={`/groups/${group.id}/calendar`} className="grid size-11 place-items-center rounded-xl border border-line bg-white text-brand-dark card-shadow transition-colors hover:border-brand hover:bg-brand-soft" aria-label="Open monthly calendar"><CalendarDays size={20} /></Link><Link href={`/expenses/new?groupId=${group.id}`} className="grid size-11 place-items-center rounded-xl bg-brand text-brand-ink" aria-label="Add daily record"><Plus size={21} /></Link></div>}
+        action={<div className="flex shrink-0 items-center gap-2"><Link href={`/groups/${group.id}/calendar`} className="grid size-11 place-items-center rounded-xl border border-line bg-white text-brand-dark card-shadow transition-colors hover:border-brand hover:bg-brand-soft" aria-label="Open monthly calendar"><CalendarDays size={20} /></Link><Link href={`/records/new?groupId=${group.id}`} className="grid size-11 place-items-center rounded-xl bg-brand text-brand-ink" aria-label="Add daily record"><Plus size={21} /></Link></div>}
       />
 
       <Card className="overflow-hidden p-5">
@@ -216,17 +216,17 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
       <section>
         <div className="mb-3 flex items-center justify-between">
           <div><h2 className="text-lg font-extrabold tracking-tight">Daily records</h2><p className="mt-0.5 text-xs text-muted">Expenses, income, and member transfers without an event.</p></div>
-          <Link href={`/expenses/new?groupId=${group.id}`} className="inline-flex min-h-11 shrink-0 items-center whitespace-nowrap text-sm font-bold text-brand-dark">Add record</Link>
+          <Link href={`/records/new?groupId=${group.id}`} className="inline-flex min-h-11 shrink-0 items-center whitespace-nowrap text-sm font-bold text-brand-dark">Add record</Link>
         </div>
-        {dailyExpenses.length === 0 ? (
-          <Card><EmptyState icon={<ReceiptText size={24} />} title="No daily records yet" body="Add an expense, income, or transfer directly to this group." action={<Link href={`/expenses/new?groupId=${group.id}`} className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-extrabold text-brand-ink">Add daily record</Link>} /></Card>
+        {dailyRecords.length === 0 ? (
+          <Card><EmptyState icon={<ReceiptText size={24} />} title="No daily records yet" body="Add an expense, income, or transfer directly to this group." action={<Link href={`/records/new?groupId=${group.id}`} className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-extrabold text-brand-ink">Add daily record</Link>} /></Card>
         ) : (
           <Card className="divide-y divide-line p-0">
-            {dailyExpenses.slice(0, 5).map((expense) => {
-              const category = snapshot.categories.find((item) => item.id === expense.categoryId);
-              const payer = snapshot.groupMembers.find((member) => member.id === expense.payerId);
-              const verb = expense.recordType === "expense" ? "paid" : expense.recordType === "income" ? "received" : "sent";
-              return <Link key={expense.id} href={`/expenses/${expense.id}`} className="flex min-h-16 items-center gap-3 px-4 py-3 transition hover:bg-slate-50 first:rounded-t-[1.25rem] last:rounded-b-[1.25rem]"><span className={`grid size-10 place-items-center rounded-xl text-lg ${expense.recordType === "income" ? "bg-success-soft" : "bg-brand-soft"}`}>{category?.emoji ?? "🧾"}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-extrabold">{expense.description}</p><p className="mt-0.5 text-xs text-muted">{payer?.name ?? "Member"} {verb} · {new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric" }).format(new Date(expense.transactionDate))}</p></div><p className={`text-sm font-extrabold ${expense.recordType === "income" ? "text-success" : expense.recordType === "transfer" ? "text-brand-dark" : ""}`}>{expense.recordType === "income" ? "+" : ""}{formatMoney(expense.amountOriginal, expense.currencyOriginal)}</p></Link>;
+            {dailyRecords.slice(0, 5).map((record) => {
+              const category = snapshot.categories.find((item) => item.id === record.categoryId);
+              const payer = snapshot.groupMembers.find((member) => member.id === record.payerId);
+              const verb = record.recordType === "expense" ? "paid" : record.recordType === "income" ? "received" : "sent";
+              return <Link key={record.id} href={`/records/${record.id}`} className="flex min-h-16 items-center gap-3 px-4 py-3 transition hover:bg-slate-50 first:rounded-t-[1.25rem] last:rounded-b-[1.25rem]"><span className={`grid size-10 place-items-center rounded-xl text-lg ${record.recordType === "income" ? "bg-success-soft" : "bg-brand-soft"}`}>{category?.emoji ?? "🧾"}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-extrabold">{record.description}</p><p className="mt-0.5 text-xs text-muted">{payer?.name ?? "Member"} {verb} · {new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric" }).format(new Date(record.transactionDate))}</p></div><p className={`text-sm font-extrabold ${record.recordType === "income" ? "text-success" : record.recordType === "transfer" ? "text-brand-dark" : ""}`}>{record.recordType === "income" ? "+" : ""}{formatMoney(record.amountOriginal, record.currencyOriginal)}</p></Link>;
             })}
           </Card>
         )}
@@ -249,7 +249,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
                   <div className="flex items-start justify-between"><span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-2xl">{event.emoji}</span><ChevronRight size={18} className="text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-brand-dark" /></div>
                   <h3 className="mt-3 font-extrabold tracking-tight">{event.name}</h3>
                   <p className="mt-1 text-xs text-muted">{dates} · {activeMembers} {activeMembers === 1 ? "member" : "members"}</p>
-                  <p className="mt-3 text-sm font-bold text-ink">{formatMoney(totalEventSpending(event.id, snapshot.expenses), event.baseCurrency)} spent</p>
+                  <p className="mt-3 text-sm font-bold text-ink">{formatMoney(totalEventSpending(event.id, snapshot.records), event.baseCurrency)} spent</p>
                 </Link>
               );
             })}
@@ -262,7 +262,7 @@ export function GroupDashboardScreen({ groupId }: { groupId: string }) {
       <Card className="grid grid-cols-3 divide-x divide-line overflow-hidden border-0 bg-gradient-to-br from-balance-start via-balance-middle to-white p-0">
         <Summary value={events.length} label={events.length === 1 ? "Event" : "Events"} icon={<CalendarDays size={18} />} />
         <Summary value={groupMembers.length} label={groupMembers.length === 1 ? "Person" : "People"} icon={<UsersRound size={18} />} />
-        <Summary value={expenses.length} label={expenses.length === 1 ? "Record" : "Records"} icon={<ReceiptText size={18} />} />
+        <Summary value={records.length} label={records.length === 1 ? "Record" : "Records"} icon={<ReceiptText size={18} />} />
       </Card>
 
       <Link href={`/groups/${group.id}/members`} className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-white px-4 card-shadow"><span className="grid size-10 place-items-center rounded-xl bg-brand-soft text-brand-dark"><UserPlus size={19} /></span><div className="min-w-0 flex-1"><p className="text-sm font-extrabold">Members & invitations</p><p className="mt-0.5 text-xs text-muted">Approve people for the whole group</p></div><ChevronRight size={18} className="text-slate-300" /></Link>
@@ -406,7 +406,7 @@ function DebtSettlementModal({ selection, currency, groupName, step, settling, e
           <span className="mx-auto grid size-16 place-items-center rounded-full bg-success-soft text-success"><CheckCircle2 size={32} /></span>
           <p className="mt-4 text-lg font-extrabold">Transfer recorded</p>
           <p className="mt-2 text-sm leading-6 text-muted">{from.name} paid {to.name} {formatMoney(debt.amount, currency)}. The Group balances have been updated.</p>
-          <div className="mt-6 grid gap-2">{recordId && <Link href={`/expenses/${recordId}`} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-brand px-4 text-sm font-extrabold text-brand-ink">View transfer</Link>}<Button type="button" variant="secondary" onClick={onClose}>Done</Button></div>
+          <div className="mt-6 grid gap-2">{recordId && <Link href={`/records/${recordId}`} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-brand px-4 text-sm font-extrabold text-brand-ink">View transfer</Link>}<Button type="button" variant="secondary" onClick={onClose}>Done</Button></div>
         </div> : <>
           <div className="mt-6 grid grid-cols-[82px_1fr_82px] items-center gap-2 text-center">
             <div className="grid justify-items-center gap-2"><Avatar name={from.name} color={from.avatarColor} /><p className="w-full truncate text-xs font-extrabold">{from.name}</p></div>

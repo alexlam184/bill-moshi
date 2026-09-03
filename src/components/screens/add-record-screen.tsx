@@ -20,31 +20,31 @@ const methods: Array<{ id: SplitMethod; label: string; hint: string }> = [
   { id: "percentage", label: "%", hint: "Split by percentage" },
 ];
 
-interface AddExpenseScreenProps {
+interface AddRecordScreenProps {
   initialGroupId?: string;
   initialEventId?: string;
   initialPersonal?: boolean;
-  editingExpenseId?: string;
+  editingRecordId?: string;
 }
 
-export function AddExpenseScreen({ initialGroupId, initialEventId, initialPersonal = false, editingExpenseId }: AddExpenseScreenProps) {
+export function AddRecordScreen({ initialGroupId, initialEventId, initialPersonal = false, editingRecordId }: AddRecordScreenProps) {
   const router = useRouter();
-  const { snapshot, selectedGroupId, personalContext, selectGroup: setCurrentGroup, selectPersonal, hydrated, addExpense, updateExpense } = useBillMoshi();
-  const editingExpense = snapshot.expenses.find((expense) => expense.id === editingExpenseId);
+  const { snapshot, selectedGroupId, personalContext, selectGroup: setCurrentGroup, selectPersonal, hydrated, addRecord, updateRecord } = useBillMoshi();
+  const editingRecord = snapshot.records.find((record) => record.id === editingRecordId);
   const requestedEvent = snapshot.events.find((event) => event.id === initialEventId);
-  const startsPersonal = Boolean((editingExpense && !editingExpense.groupId) || initialPersonal || (!editingExpenseId && !initialGroupId && !initialEventId && personalContext));
+  const startsPersonal = Boolean((editingRecord && !editingRecord.groupId) || initialPersonal || (!editingRecordId && !initialGroupId && !initialEventId && personalContext));
   const [personal, setPersonal] = useState(startsPersonal);
   const [groupId, setGroupId] = useState(
-    startsPersonal ? "" : editingExpense?.groupId ?? initialGroupId ?? requestedEvent?.groupId ?? selectedGroupId ?? snapshot.groups[0]?.id ?? "",
+    startsPersonal ? "" : editingRecord?.groupId ?? initialGroupId ?? requestedEvent?.groupId ?? selectedGroupId ?? snapshot.groups[0]?.id ?? "",
   );
-  const [eventId, setEventId] = useState(editingExpense?.eventId ?? initialEventId ?? "");
+  const [eventId, setEventId] = useState(editingRecord?.eventId ?? initialEventId ?? "");
   const event = snapshot.events.find((item) => item.id === eventId && item.groupId === groupId);
   const group = snapshot.groups.find((item) => item.id === groupId);
   const baseCurrency = resolveRecordBaseCurrency({
     defaultCurrency: snapshot.currentUser.defaultCurrency,
     groupCurrency: group?.currency,
     eventCurrency: event?.baseCurrency,
-    storedBaseCurrency: editingExpense?.baseCurrency,
+    storedBaseCurrency: editingRecord?.baseCurrency,
   });
   const groupEvents = useMemo(
     () => snapshot.events.filter((item) => item.groupId === groupId),
@@ -52,14 +52,14 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
   );
   const activeEventId = event?.id;
   const members = personal
-    ? [{ id: snapshot.currentUser.id, userId: snapshot.currentUser.id, name: snapshot.currentUser.name, email: snapshot.currentUser.email, role: "owner" as const, status: "active" as const, joinedAt: "", avatarColor: "#2F80ED" }]
+    ? [{ id: snapshot.currentUser.id, userId: snapshot.currentUser.id, name: snapshot.currentUser.name, email: snapshot.currentUser.email, role: "owner" as const, status: "active" as const, joinedAt: "", avatarColor: "var(--color-avatar-brand)" }]
     : event?.id
       ? snapshot.members.filter((member) => member.eventId === event.id && member.status === "active")
       : snapshot.groupMembers.filter((member) => member.groupId === groupId && member.status === "active");
   const [amount, setAmount] = useState("");
-  const [recordType, setRecordType] = useState<RecordType>(editingExpense?.recordType ?? "expense");
+  const [recordType, setRecordType] = useState<RecordType>(editingRecord?.recordType ?? "expense");
   const [currency, setCurrency] = useState<CurrencyCode>(() => (
-    editingExpense?.currencyOriginal
+    editingRecord?.currencyOriginal
       ?? requestedEvent?.baseCurrency
       ?? (startsPersonal
         ? snapshot.currentUser.defaultCurrency
@@ -67,25 +67,25 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
           ?? snapshot.currentUser.defaultCurrency)
   ));
   const [exchangeRate, setExchangeRate] = useState("1");
-  const [exchangeRateSource, setExchangeRateSource] = useState<"automatic" | "manual">(editingExpense?.exchangeRateSource === "automatic" ? "automatic" : "manual");
-  const [exchangeRateDate, setExchangeRateDate] = useState(editingExpense?.exchangeRateDate ?? "");
-  const [rateStatus, setRateStatus] = useState<RateStatus>(editingExpense?.exchangeRateSource === "automatic" ? "automatic" : "idle");
+  const [exchangeRateSource, setExchangeRateSource] = useState<"automatic" | "manual">(editingRecord?.exchangeRateSource === "automatic" ? "automatic" : "manual");
+  const [exchangeRateDate, setExchangeRateDate] = useState(editingRecord?.exchangeRateDate ?? "");
+  const [rateStatus, setRateStatus] = useState<RateStatus>(editingRecord?.exchangeRateSource === "automatic" ? "automatic" : "idle");
   const [rateError, setRateError] = useState("");
-  const [automaticRateEnabled, setAutomaticRateEnabled] = useState(!editingExpenseId);
+  const [automaticRateEnabled, setAutomaticRateEnabled] = useState(!editingRecordId);
   const [rateRequestVersion, setRateRequestVersion] = useState(0);
   const reportingCurrency = snapshot.currentUser.defaultCurrency;
-  const [reportingRate, setReportingRate] = useState(editingExpense?.baseToReportingRate ? String(editingExpense.baseToReportingRate) : "");
-  const [reportingRateSource, setReportingRateSource] = useState<"automatic" | "manual">(editingExpense?.reportingRateSource === "automatic" ? "automatic" : "manual");
-  const [reportingRateDate, setReportingRateDate] = useState(editingExpense?.reportingRateDate ?? "");
-  const [reportingRateStatus, setReportingRateStatus] = useState<RateStatus>(editingExpense?.reportingRateSource === "automatic" ? "automatic" : "idle");
+  const [reportingRate, setReportingRate] = useState(editingRecord?.baseToReportingRate ? String(editingRecord.baseToReportingRate) : "");
+  const [reportingRateSource, setReportingRateSource] = useState<"automatic" | "manual">(editingRecord?.reportingRateSource === "automatic" ? "automatic" : "manual");
+  const [reportingRateDate, setReportingRateDate] = useState(editingRecord?.reportingRateDate ?? "");
+  const [reportingRateStatus, setReportingRateStatus] = useState<RateStatus>(editingRecord?.reportingRateSource === "automatic" ? "automatic" : "idle");
   const [reportingRateError, setReportingRateError] = useState("");
-  const [reportingAutomaticEnabled, setReportingAutomaticEnabled] = useState(!editingExpenseId);
+  const [reportingAutomaticEnabled, setReportingAutomaticEnabled] = useState(!editingRecordId);
   const [reportingRequestVersion, setReportingRequestVersion] = useState(0);
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState("food");
   const [payerId, setPayerId] = useState("");
-  const [selected, setSelected] = useState<string[]>(() => editingExpense
-    ? editingExpense.splits.map((split) => split.memberId)
+  const [selected, setSelected] = useState<string[]>(() => editingRecord
+    ? editingRecord.splits.map((split) => split.memberId)
     : defaultSplitMemberIds(members, snapshot.currentUser.id));
   const [method, setMethod] = useState<SplitMethod>("equal");
   const [values, setValues] = useState<Record<string, string>>({});
@@ -104,15 +104,15 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
   const initializedScope = useRef("");
   const initializedHydratedCurrency = useRef(false);
   const automaticRateEligible = shouldFetchAutomaticExchangeRate({
-    isNewRecord: !editingExpenseId,
+    isNewRecord: !editingRecordId,
     currency,
     baseCurrency,
   });
-  const reportingRateEligible = Boolean(!editingExpenseId && baseCurrency !== reportingCurrency && currency !== reportingCurrency);
+  const reportingRateEligible = Boolean(!editingRecordId && baseCurrency !== reportingCurrency && currency !== reportingCurrency);
   useUnsavedChanges(formDirty && !saving);
 
   useEffect(() => {
-    if (!hydrated || editingExpenseId || initializedHydratedCurrency.current) return;
+    if (!hydrated || editingRecordId || initializedHydratedCurrency.current) return;
     initializedHydratedCurrency.current = true;
     queueMicrotask(() => {
       setCurrency(personal ? snapshot.currentUser.defaultCurrency : event?.baseCurrency ?? group?.currency ?? snapshot.currentUser.defaultCurrency);
@@ -120,10 +120,10 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
       setAutomaticRateEnabled(true);
       setRateStatus("idle");
     });
-  }, [editingExpenseId, event?.baseCurrency, group?.currency, hydrated, personal, snapshot.currentUser.defaultCurrency]);
+  }, [editingRecordId, event?.baseCurrency, group?.currency, hydrated, personal, snapshot.currentUser.defaultCurrency]);
 
   useEffect(() => {
-    if (!requestedEvent || editingExpenseId) return;
+    if (!requestedEvent || editingRecordId) return;
     queueMicrotask(() => {
       setCurrentGroup(requestedEvent.groupId);
       setPersonal(false);
@@ -132,10 +132,10 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
       setExchangeRate("1");
       setRateStatus("idle");
     });
-  }, [editingExpenseId, requestedEvent, setCurrentGroup]);
+  }, [editingRecordId, requestedEvent, setCurrentGroup]);
 
   useEffect(() => {
-    if (editingExpenseId || initialGroupId || initialEventId || personal || !selectedGroupId || selectedGroupId === groupId) return;
+    if (editingRecordId || initialGroupId || initialEventId || personal || !selectedGroupId || selectedGroupId === groupId) return;
     queueMicrotask(() => {
       initializedScope.current = "";
       setGroupId(selectedGroupId);
@@ -147,10 +147,10 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
       setSelected([]);
       setValues({});
     });
-  }, [editingExpenseId, groupId, initialEventId, initialGroupId, personal, selectedGroupId, snapshot.currentUser.defaultCurrency, snapshot.groups]);
+  }, [editingRecordId, groupId, initialEventId, initialGroupId, personal, selectedGroupId, snapshot.currentUser.defaultCurrency, snapshot.groups]);
 
   useEffect(() => {
-    if (editingExpenseId || initialGroupId || initialEventId || !personalContext || personal) return;
+    if (editingRecordId || initialGroupId || initialEventId || !personalContext || personal) return;
     queueMicrotask(() => {
       initializedScope.current = "";
       setPersonal(true);
@@ -164,51 +164,51 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
       setSelected([]);
       setValues({});
     });
-  }, [editingExpenseId, initialEventId, initialGroupId, personal, personalContext, snapshot.currentUser.defaultCurrency]);
+  }, [editingRecordId, initialEventId, initialGroupId, personal, personalContext, snapshot.currentUser.defaultCurrency]);
 
   useEffect(() => {
-    if (editingExpenseId || !initialGroupId || initialGroupId === selectedGroupId || !snapshot.groups.some((item) => item.id === initialGroupId)) return;
+    if (editingRecordId || !initialGroupId || initialGroupId === selectedGroupId || !snapshot.groups.some((item) => item.id === initialGroupId)) return;
     queueMicrotask(() => setCurrentGroup(initialGroupId));
-  }, [editingExpenseId, initialGroupId, selectedGroupId, setCurrentGroup, snapshot.groups]);
+  }, [editingRecordId, initialGroupId, selectedGroupId, setCurrentGroup, snapshot.groups]);
 
   useEffect(() => {
-    if (editingExpenseId || !initialPersonal || personalContext) return;
+    if (editingRecordId || !initialPersonal || personalContext) return;
     queueMicrotask(() => selectPersonal());
-  }, [editingExpenseId, initialPersonal, personalContext, selectPersonal]);
+  }, [editingRecordId, initialPersonal, personalContext, selectPersonal]);
 
   useEffect(() => {
-    if (!editingExpense || initializedEdit.current) return;
+    if (!editingRecord || initializedEdit.current) return;
     initializedEdit.current = true;
-    setPersonal(!editingExpense.groupId);
-    setRecordType(editingExpense.recordType);
-    setGroupId(editingExpense.groupId ?? "");
-    setEventId(editingExpense.eventId ?? "");
-    setAmount(String(editingExpense.amountOriginal));
-    setCurrency(editingExpense.currencyOriginal);
-    setExchangeRate(String(editingExpense.exchangeRate));
-    setExchangeRateSource(editingExpense.exchangeRateSource === "automatic" ? "automatic" : "manual");
-    setExchangeRateDate(editingExpense.exchangeRateDate ?? editingExpense.transactionDate.slice(0, 10));
-    setRateStatus(editingExpense.exchangeRateSource === "automatic" ? "automatic" : "manual");
+    setPersonal(!editingRecord.groupId);
+    setRecordType(editingRecord.recordType);
+    setGroupId(editingRecord.groupId ?? "");
+    setEventId(editingRecord.eventId ?? "");
+    setAmount(String(editingRecord.amountOriginal));
+    setCurrency(editingRecord.currencyOriginal);
+    setExchangeRate(String(editingRecord.exchangeRate));
+    setExchangeRateSource(editingRecord.exchangeRateSource === "automatic" ? "automatic" : "manual");
+    setExchangeRateDate(editingRecord.exchangeRateDate ?? editingRecord.transactionDate.slice(0, 10));
+    setRateStatus(editingRecord.exchangeRateSource === "automatic" ? "automatic" : "manual");
     setAutomaticRateEnabled(false);
-    setReportingRate(editingExpense.baseToReportingRate ? String(editingExpense.baseToReportingRate) : "");
-    setReportingRateSource(editingExpense.reportingRateSource === "automatic" ? "automatic" : "manual");
-    setReportingRateDate(editingExpense.reportingRateDate ?? editingExpense.transactionDate.slice(0, 10));
-    setReportingRateStatus(editingExpense.reportingRateSource === "automatic" ? "automatic" : editingExpense.baseToReportingRate ? "manual" : "idle");
+    setReportingRate(editingRecord.baseToReportingRate ? String(editingRecord.baseToReportingRate) : "");
+    setReportingRateSource(editingRecord.reportingRateSource === "automatic" ? "automatic" : "manual");
+    setReportingRateDate(editingRecord.reportingRateDate ?? editingRecord.transactionDate.slice(0, 10));
+    setReportingRateStatus(editingRecord.reportingRateSource === "automatic" ? "automatic" : editingRecord.baseToReportingRate ? "manual" : "idle");
     setReportingAutomaticEnabled(false);
-    setDescription(editingExpense.description);
-    setCategoryId(editingExpense.categoryId);
-    setPayerId(editingExpense.payerId);
-    setSelected(editingExpense.splits.map((split) => split.memberId));
-    const storedSplitMethod = editingExpense.splits[0]?.splitMethod ?? "equal";
+    setDescription(editingRecord.description);
+    setCategoryId(editingRecord.categoryId);
+    setPayerId(editingRecord.payerId);
+    setSelected(editingRecord.splits.map((split) => split.memberId));
+    const storedSplitMethod = editingRecord.splits[0]?.splitMethod ?? "equal";
     const splitMethod = storedSplitMethod === "shares" ? "exact" : storedSplitMethod;
     setMethod(splitMethod);
-    setValues(Object.fromEntries(editingExpense.splits.map((split) => [
+    setValues(Object.fromEntries(editingRecord.splits.map((split) => [
       split.memberId,
       String(splitMethod === "percentage" ? split.percentage ?? 0 : split.owedAmount),
     ])));
-    setDate(toLocalDateTimeInputValue(editingExpense.transactionDate));
-    setNotes(editingExpense.notes ?? "");
-  }, [editingExpense]);
+    setDate(toLocalDateTimeInputValue(editingRecord.transactionDate));
+    setNotes(editingRecord.notes ?? "");
+  }, [editingRecord]);
 
   const scopeKey = personal ? "personal" : event ? `event:${event.id}` : group ? `group:${group.id}` : "";
   useEffect(() => {
@@ -217,12 +217,12 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
       : activeEventId
         ? snapshot.members.filter((member) => member.eventId === activeEventId && member.status === "active")
         : snapshot.groupMembers.filter((member) => member.groupId === groupId && member.status === "active");
-    if (editingExpenseId || !scopeKey || scopeMembers.length === 0 || initializedScope.current === scopeKey) return;
+    if (editingRecordId || !scopeKey || scopeMembers.length === 0 || initializedScope.current === scopeKey) return;
     initializedScope.current = scopeKey;
     setPayerId(scopeMembers[0].id);
     setSelected(defaultSplitMemberIds(scopeMembers, snapshot.currentUser.id));
     setValues({});
-  }, [activeEventId, editingExpenseId, groupId, personal, scopeKey, snapshot.currentUser.id, snapshot.groupMembers, snapshot.members]);
+  }, [activeEventId, editingRecordId, groupId, personal, scopeKey, snapshot.currentUser.id, snapshot.groupMembers, snapshot.members]);
 
   useEffect(() => {
     if (currency === baseCurrency) {
@@ -272,7 +272,7 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
       return;
     }
     if (currency === reportingCurrency) {
-      if (editingExpenseId) return;
+      if (editingRecordId) return;
       queueMicrotask(() => {
         setReportingRate("");
         setReportingRateDate(exchangeRateDate || date.slice(0, 10));
@@ -306,7 +306,7 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
         setReportingRateError(caught instanceof Error ? caught.message : "CBSA exchange rates are unavailable.");
       });
     return () => controller.abort();
-  }, [baseCurrency, currency, date, editingExpenseId, exchangeRateDate, reportingAutomaticEnabled, reportingCurrency, reportingRateEligible, reportingRequestVersion]);
+  }, [baseCurrency, currency, date, editingRecordId, exchangeRateDate, reportingAutomaticEnabled, reportingCurrency, reportingRateEligible, reportingRequestVersion]);
 
   const originalAmount = Number(amount) || 0;
   const rate = currency !== baseCurrency ? Number(exchangeRate) || 0 : 1;
@@ -414,8 +414,8 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
     setExchangeRate("");
     setExchangeRateSource("manual");
     setExchangeRateDate(date.slice(0, 10));
-    setAutomaticRateEnabled(!editingExpenseId);
-    setRateStatus(editingExpenseId ? "manual" : "loading");
+    setAutomaticRateEnabled(!editingRecordId);
+    setRateStatus(editingRecordId ? "manual" : "loading");
   }
 
   function changeExchangeRate(value: string) {
@@ -493,11 +493,11 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
       receipt,
     };
     try {
-      if (editingExpenseId) await updateExpense(editingExpenseId, input);
-      else await addExpense(input);
+      if (editingRecordId) await updateRecord(editingRecordId, input);
+      else await addRecord(input);
       setFormDirty(false);
-      router.push(editingExpenseId
-        ? `/expenses/${editingExpenseId}`
+      router.push(editingRecordId
+        ? `/records/${editingRecordId}`
         : personal ? "/records/mine" : event ? `/events/${event.id}` : `/groups/${groupId}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save the record.");
@@ -509,18 +509,18 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
   function showFormError(message: string, selector?: string) {
     setError(message);
     requestAnimationFrame(() => {
-      const target = selector ? document.querySelector<HTMLElement>(selector) : document.getElementById("expense-form-error");
+      const target = selector ? document.querySelector<HTMLElement>(selector) : document.getElementById("record-form-error");
       target?.focus();
     });
   }
 
-  if (editingExpenseId && hydrated && !editingExpense) return <Card className="p-8 text-center"><h1 className="font-extrabold">Expense not found</h1><Link href="/" className="mt-4 inline-block text-sm font-bold text-brand-dark">Back home</Link></Card>;
-  if (snapshot.groups.length === 0 && !personal) return <Card className="p-8 text-center"><h1 className="text-xl font-extrabold">Choose how to record it</h1><p className="mt-2 text-sm text-muted">Use Myself for a personal expense, or create a group for shared spending.</p><div className="mt-5 flex justify-center gap-3"><Link href="/expenses/new?personal=1" className="inline-flex min-h-11 items-center rounded-xl bg-brand px-5 text-sm font-bold text-brand-ink">Use Myself</Link><Link href="/groups/new" className="inline-flex min-h-11 items-center rounded-xl border border-line px-5 text-sm font-bold">Create group</Link></div></Card>;
+  if (editingRecordId && hydrated && !editingRecord) return <Card className="p-8 text-center"><h1 className="font-extrabold">Record not found</h1><Link href="/" className="mt-4 inline-block text-sm font-bold text-brand-dark">Back home</Link></Card>;
+  if (snapshot.groups.length === 0 && !personal) return <Card className="p-8 text-center"><h1 className="text-xl font-extrabold">Choose how to record it</h1><p className="mt-2 text-sm text-muted">Use Myself for a personal expense, or create a group for shared spending.</p><div className="mt-5 flex justify-center gap-3"><Link href="/records/new?personal=1" className="inline-flex min-h-11 items-center rounded-xl bg-brand px-5 text-sm font-bold text-brand-ink">Use Myself</Link><Link href="/groups/new" className="inline-flex min-h-11 items-center rounded-xl border border-line px-5 text-sm font-bold">Create group</Link></div></Card>;
 
-  const backHref = editingExpenseId
-    ? `/expenses/${editingExpenseId}`
+  const backHref = editingRecordId
+    ? `/records/${editingRecordId}`
     : personal ? "/records/mine" : event ? `/events/${event.id}` : group ? `/groups/${group.id}` : "/";
-  const groupIsCurrentContext = Boolean(group && (editingExpenseId || initialGroupId || initialEventId || selectedGroupId));
+  const groupIsCurrentContext = Boolean(group && (editingRecordId || initialGroupId || initialEventId || selectedGroupId));
   const category = snapshot.categories.find((item) => item.id === categoryId);
   const payer = members.find((member) => member.id === payerId);
 
@@ -528,18 +528,18 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
     <div className="modal-shadow mx-auto min-h-dvh w-full max-w-[680px] overflow-hidden bg-white md:min-h-0 md:rounded-[1.75rem] md:border md:border-line">
       <header className="safe-top-record-header sticky top-0 z-20 grid grid-cols-[64px_1fr_80px] items-center bg-white/95 px-4 backdrop-blur">
         <Link href={backHref} aria-label="Close new record" className="grid size-12 place-items-center rounded-full border border-line bg-white text-muted shadow-sm transition hover:bg-slate-50 hover:text-ink"><X size={25} strokeWidth={2.4} /></Link>
-        <h1 className="text-center text-xl font-extrabold tracking-[-0.03em]">{editingExpenseId ? "Edit Record" : "New Record"}</h1>
-        <button form="expense-record-form" type="submit" disabled={saving} className="min-h-11 whitespace-nowrap rounded-full bg-brand px-4 text-sm font-extrabold text-brand-ink transition-colors enabled:hover:bg-brand-hover enabled:active:bg-brand-active disabled:bg-slate-100 disabled:text-slate-400">{saving ? "Saving…" : "Done"}</button>
+        <h1 className="text-center text-xl font-extrabold tracking-[-0.03em]">{editingRecordId ? "Edit Record" : "New Record"}</h1>
+        <button form="record-form" type="submit" disabled={saving} className="min-h-11 whitespace-nowrap rounded-full bg-brand px-4 text-sm font-extrabold text-brand-ink transition-colors enabled:hover:bg-brand-hover enabled:active:bg-brand-active disabled:bg-slate-100 disabled:text-slate-400">{saving ? "Saving…" : "Done"}</button>
       </header>
 
       <div className="grid grid-cols-3 border-b border-line px-5" role="tablist" aria-label="Record type">
         {(["expense", "income", "transfer"] as const).map((type) => {
-          const disabled = type === "transfer" && personal;
+          const disabled = (type === "transfer" && personal) || (Boolean(editingRecord?.recurringPaymentId) && type !== "expense");
           return <button key={type} type="button" role="tab" aria-selected={recordType === type} disabled={disabled} title={disabled ? "Choose a group to transfer between members" : undefined} onClick={() => changeRecordType(type)} className={`relative min-h-14 text-sm capitalize transition ${recordType === type ? "font-extrabold text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-1 after:rounded-t-full after:bg-brand" : disabled ? "font-bold text-slate-300" : "font-bold text-muted hover:text-ink"}`}>{type}</button>;
         })}
       </div>
 
-      <form id="expense-record-form" onSubmit={submit} onChange={() => setFormDirty(true)} className="px-4 pb-12 sm:px-5" noValidate>
+      <form id="record-form" onSubmit={submit} onChange={() => setFormDirty(true)} className="px-4 pb-12 sm:px-5" noValidate>
         <section className="grid grid-cols-[46%_54%] items-center border-b border-line py-8">
           <label className="relative flex w-fit items-center gap-2">
             <span className="sr-only">Currency</span>
@@ -559,7 +559,7 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
 
         <RecordRow label="Event">
           {personal ? <p className="text-right text-sm font-bold text-muted">No event · Personal record</p> : <div className="relative">
-            <select aria-label="Event" name="event" autoComplete="off" value={event?.id ?? ""} disabled={Boolean(editingExpenseId)} onChange={(changeEvent) => selectEvent(changeEvent.target.value)} className="min-h-11 w-full appearance-none bg-transparent pr-6 text-right text-sm font-bold text-muted outline-none disabled:opacity-60">
+            <select aria-label="Event" name="event" autoComplete="off" value={event?.id ?? ""} disabled={Boolean(editingRecordId)} onChange={(changeEvent) => selectEvent(changeEvent.target.value)} className="min-h-11 w-full appearance-none bg-transparent pr-6 text-right text-sm font-bold text-muted outline-none disabled:opacity-60">
               <option value="">No event · Daily record</option>
               {groupEvents.map((item) => <option key={item.id} value={item.id}>{item.emoji} {item.name}</option>)}
             </select>
@@ -567,7 +567,7 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
           </div>}
         </RecordRow>
 
-        {currency !== baseCurrency && <RecordRow label="Rate"><div className="grid justify-items-end gap-2"><span className="text-xs font-bold text-muted">{formatMoney(originalAmount, currency)} → {formatMoney(baseAmount, baseCurrency)}</span><div className="flex items-center gap-2"><input aria-label={`Exchange rate to ${baseCurrency}`} name="exchange-rate" autoComplete="off" type="number" min="0" step="any" inputMode="decimal" className="min-h-11 w-28 rounded-lg bg-slate-50 px-2 text-right text-sm font-bold outline-none focus:ring-2 focus:ring-focus" value={exchangeRate} onChange={(changeEvent) => changeExchangeRate(changeEvent.target.value)} placeholder={rateStatus === "loading" ? "Loading…" : "Rate…"} />{automaticRateEligible && <button type="button" onClick={refreshExchangeRate} disabled={rateStatus === "loading"} className="grid size-11 place-items-center rounded-lg bg-brand-soft text-brand-dark disabled:opacity-60" aria-label="Refresh automatic CBSA exchange rate"><RefreshCw size={15} className={rateStatus === "loading" ? "animate-spin" : ""} /></button>}</div><p aria-live="polite" className={`text-right text-[0.68rem] font-bold ${rateStatus === "error" ? "text-danger" : rateStatus === "automatic" ? "text-success" : "text-muted"}`}>{rateStatus === "loading" ? "Getting the latest CBSA rate…" : rateStatus === "automatic" ? `CBSA automatic · 1 ${currency} → ${exchangeRate} ${baseCurrency} · effective ${formatRateDate(exchangeRateDate)}` : rateStatus === "error" ? `${rateError} Enter a manual rate.` : editingExpenseId ? `Editing existing record · enter rate manually` : `Manual · 1 ${currency} → ${exchangeRate || "—"} ${baseCurrency}`}</p></div></RecordRow>}
+        {currency !== baseCurrency && <RecordRow label="Rate"><div className="grid justify-items-end gap-2"><span className="text-xs font-bold text-muted">{formatMoney(originalAmount, currency)} → {formatMoney(baseAmount, baseCurrency)}</span><div className="flex items-center gap-2"><input aria-label={`Exchange rate to ${baseCurrency}`} name="exchange-rate" autoComplete="off" type="number" min="0" step="any" inputMode="decimal" className="min-h-11 w-28 rounded-lg bg-slate-50 px-2 text-right text-sm font-bold outline-none focus:ring-2 focus:ring-focus" value={exchangeRate} onChange={(changeEvent) => changeExchangeRate(changeEvent.target.value)} placeholder={rateStatus === "loading" ? "Loading…" : "Rate…"} />{automaticRateEligible && <button type="button" onClick={refreshExchangeRate} disabled={rateStatus === "loading"} className="grid size-11 place-items-center rounded-lg bg-brand-soft text-brand-dark disabled:opacity-60" aria-label="Refresh automatic CBSA exchange rate"><RefreshCw size={15} className={rateStatus === "loading" ? "animate-spin" : ""} /></button>}</div><p aria-live="polite" className={`text-right text-[0.68rem] font-bold ${rateStatus === "error" ? "text-danger" : rateStatus === "automatic" ? "text-success" : "text-muted"}`}>{rateStatus === "loading" ? "Getting the latest CBSA rate…" : rateStatus === "automatic" ? `CBSA automatic · 1 ${currency} → ${exchangeRate} ${baseCurrency} · effective ${formatRateDate(exchangeRateDate)}` : rateStatus === "error" ? `${rateError} Enter a manual rate.` : editingRecordId ? `Editing existing record · enter rate manually` : `Manual · 1 ${currency} → ${exchangeRate || "—"} ${baseCurrency}`}</p></div></RecordRow>}
 
         {baseCurrency !== reportingCurrency && <RecordRow label="All Groups"><div className="grid justify-items-end gap-2"><span className="text-xs font-bold text-muted">{formatMoney(baseAmount, baseCurrency)} → {formatMoney(reportingAmount, reportingCurrency)}</span>{currency === reportingCurrency && rate > 0 && !reportingRate ? <p className="text-right text-xs font-extrabold text-success">Derived · 1 {baseCurrency} → {formatExchangeRate(baseToReportingRate)} {reportingCurrency}</p> : <><div className="flex items-center gap-2"><input aria-label={`All Groups exchange rate to ${reportingCurrency}`} name="reporting-rate" autoComplete="off" type="number" min="0" step="any" inputMode="decimal" className="min-h-11 w-28 rounded-lg bg-slate-50 px-2 text-right text-sm font-bold outline-none focus:ring-2 focus:ring-focus" value={reportingRate} onChange={(changeEvent) => changeReportingRate(changeEvent.target.value)} placeholder={reportingRateStatus === "loading" ? "Loading…" : "Rate…"} />{reportingRateEligible && <button type="button" onClick={refreshReportingRate} disabled={reportingRateStatus === "loading"} className="grid size-11 place-items-center rounded-lg bg-brand-soft text-brand-dark disabled:opacity-60" aria-label="Refresh All Groups CBSA exchange rate"><RefreshCw size={15} className={reportingRateStatus === "loading" ? "animate-spin" : ""} /></button>}</div><p aria-live="polite" className={`text-right text-[0.68rem] font-bold ${reportingRateStatus === "error" ? "text-danger" : reportingRateStatus === "automatic" ? "text-success" : "text-muted"}`}>{reportingRateStatus === "loading" ? "Getting the All Groups rate…" : reportingRateStatus === "automatic" ? `CBSA automatic · 1 ${baseCurrency} → ${reportingRate} ${reportingCurrency}` : reportingRateStatus === "error" ? `${reportingRateError} Enter a manual rate.` : `Reporting rate · 1 ${baseCurrency} → ${reportingRate || "—"} ${reportingCurrency}`}</p></>}</div></RecordRow>}
 
@@ -584,14 +584,14 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
             <textarea aria-label="Memo" name="memo" autoComplete="off" rows={2} className="min-h-16 min-w-0 flex-1 resize-y bg-transparent text-sm leading-6 outline-none placeholder:text-placeholder" value={notes} onChange={(changeEvent) => setNotes(changeEvent.target.value)} placeholder="Add a note (optional)…" />
             <label className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-xl bg-brand-soft text-brand-dark" aria-label="Attach receipt"><Camera size={19} /><input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" className="sr-only" onChange={(changeEvent) => setReceipt(changeEvent.target.files?.[0])} /></label>
           </div>
-          {(receipt || editingExpense?.receiptName) && <p className="mt-2 flex items-center gap-1.5 truncate text-xs font-bold text-brand-dark"><Paperclip size={13} /> {receipt?.name ?? editingExpense?.receiptName}</p>}
+          {(receipt || editingRecord?.receiptName) && <p className="mt-2 flex items-center gap-1.5 truncate text-xs font-bold text-brand-dark"><Paperclip size={13} /> {receipt?.name ?? editingRecord?.receiptName}</p>}
         </RecordRow>
 
         <RecordRow label={recordType === "expense" ? "Paid by" : recordType === "income" ? "Received by" : "From"}>
           <div className="flex items-center gap-2"><Avatar name={payer?.name ?? "?"} color={payer?.avatarColor} size="sm" /><div className="relative min-w-0 flex-1"><select aria-label={recordType === "expense" ? "Paid by" : recordType === "income" ? "Received by" : "Transfer from"} name="payer" autoComplete="off" className="min-h-11 w-full appearance-none bg-transparent pr-6 text-sm font-extrabold outline-none" value={payerId} onChange={(changeEvent) => { const nextPayerId = changeEvent.target.value; setPayerId(nextPayerId); if (recordType === "transfer" && selected[0] === nextPayerId) { const nextRecipient = members.find((member) => member.id !== nextPayerId); setSelected(nextRecipient ? [nextRecipient.id] : []); } }}>{members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select><ChevronDown className="pointer-events-none absolute right-0 top-3.5 text-muted" size={17} /></div></div>
         </RecordRow>
 
-        {recordType === "transfer" ? <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2 border-b border-line py-4 sm:grid-cols-[108px_minmax(0,1fr)] sm:gap-4">
+        {!personal && (recordType === "transfer" ? <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-2 border-b border-line py-4 sm:grid-cols-[108px_minmax(0,1fr)] sm:gap-4">
           <p className="pt-2 text-sm font-extrabold">To</p>
           <div className="grid gap-1">
             {members.filter((member) => member.id !== payerId).map((member) => {
@@ -605,9 +605,9 @@ export function AddExpenseScreen({ initialGroupId, initialEventId, initialPerson
             <span className="mb-1 flex items-center justify-end gap-2"><span className={`text-xs font-bold ${splitConfigurationError ? "text-danger" : "text-muted"}`}>{splitConfigurationError ? "Needs update" : methods.find((option) => option.id === method)?.label}</span><ChevronRight size={18} className="shrink-0 text-slate-300" /></span>
             {selectedSplitMembers.length === 0 ? <span className="py-2 text-right text-sm font-bold text-muted">Select people</span> : selectedSplitMembers.map((member) => <span key={member.id} className="flex min-h-10 items-center gap-2"><Avatar name={member.name} color={member.avatarColor} size="sm" /><span className="min-w-0 flex-1 truncate text-sm font-extrabold">{member.name}{(member.userId === snapshot.currentUser.id || member.id === snapshot.currentUser.id) && <span className="ml-1 font-semibold text-muted">(me)</span>}</span><span className="shrink-0 text-xs font-extrabold text-muted">{formatMoney(savedSplitAmounts.get(member.id) ?? 0, baseCurrency)}</span></span>)}
           </span>
-        </button>}
+        </button>)}
 
-        {error && <p id="expense-form-error" role="alert" aria-live="assertive" tabIndex={-1} className="mt-5 rounded-xl bg-danger-soft px-4 py-3 text-sm font-semibold text-danger outline-none">{error}</p>}
+        {error && <p id="record-form-error" role="alert" aria-live="assertive" tabIndex={-1} className="mt-5 rounded-xl bg-danger-soft px-4 py-3 text-sm font-semibold text-danger outline-none">{error}</p>}
         <p className="mt-5 text-center text-xs leading-5 text-muted">Saved locally first and synced when connected.</p>
       </form>
 

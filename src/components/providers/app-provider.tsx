@@ -12,9 +12,15 @@ import {
   type ReactNode,
 } from "react";
 import { allocateSplits, roundMoney, type SplitInput } from "@/lib/domain/calculations";
-import { deleteGroupData, leaveGroupData } from "@/lib/domain/group-lifecycle";
+import { emptySnapshot } from "@/lib/domain/empty-snapshot";
+import { createClientId } from "@/lib/domain/client-id";
+import { deleteGroupData, leaveGroupData, removeDeletedGroups } from "@/lib/domain/group-lifecycle";
 import { bindSnapshotIdentity } from "@/lib/domain/identity";
 import { seedSnapshot } from "@/lib/domain/seed";
+import { recordSyncFingerprint } from "@/lib/domain/sync-conflicts";
+import type { RemoteGroupState } from "@/lib/integrations/google/contracts";
+import { useRecurringPayments } from "@/lib/hooks/use-recurring-payments";
+import type { RestorePreview, RestoreSummary } from "@/lib/domain/restore";
 import type {
   AppSnapshot,
   BillEvent,
@@ -23,14 +29,17 @@ import type {
   DebtRecord,
   DebtStatus,
   EventMember,
-  Expense,
+  LedgerRecord,
+  RecordSyncConflict,
   Group,
   GroupInvitation,
+  GroupInvitationPreview,
   GroupMember,
   JoinRequest,
   MemberRole,
   PendingOperation,
   RecordType,
+  RecurringPaymentInput,
   Settlement,
   SplitMethod,
 } from "@/lib/domain/types";
@@ -44,13 +53,14 @@ import {
   saveReceipt,
   saveSnapshot,
   updatePendingOperation,
+  restoreFromPreview,
 } from "@/lib/store/db";
 
 type CreateGroupInput = Pick<Group, "name" | "emoji" | "description" | "currency">;
 type CreateEventInput = Pick<BillEvent, "groupId" | "name" | "emoji" | "baseCurrency" | "startDate" | "endDate">;
 type UpdateEventInput = Omit<CreateEventInput, "groupId">;
 
-export interface AddExpenseInput {
+export interface AddRecordInput {
   recordType: RecordType;
   groupId?: string;
   eventId?: string;
@@ -63,11 +73,11 @@ export interface AddExpenseInput {
   exchangeRate: number;
   baseCurrency?: CurrencyCode;
   exchangeRateDate?: string;
-  exchangeRateSource?: Expense["exchangeRateSource"];
+  exchangeRateSource?: LedgerRecord["exchangeRateSource"];
   exchangeRateProvider?: string;
   reportingCurrency?: CurrencyCode;
   baseToReportingRate?: number;
-  reportingRateSource?: Expense["reportingRateSource"];
+  reportingRateSource?: LedgerRecord["reportingRateSource"];
   reportingRateDate?: string;
   reportingRateProvider?: string;
   splitMethod: SplitMethod;
@@ -100,6 +110,11 @@ export interface AddDebtRecordInput {
 }
 
 interface AppContextValue {
+  setRestoreMode(active: boolean): void;
+  restoreGoogleBackup(preview: RestorePreview, restoreCurrency?: boolean): Promise<RestoreSummary>;
+  saveRecurringPayment(input: RecurringPaymentInput, paymentId?: string): Promise<string>;
+  changeRecurringPayment(paymentId: string, action: "pause" | "resume" | "skip" | "delete"): Promise<void>;
+  recurringError: string;
   snapshot: AppSnapshot;
   selectedGroupId?: string;
   personalContext: boolean;
@@ -109,6 +124,8 @@ interface AppContextValue {
   pendingCount: number;
   syncing: boolean;
   syncMessage: string;
+  syncConflicts: RecordSyncConflict[];
+  googleFolderCreationRequired: boolean;
   lastSyncAt?: string;
   selectGroup(groupId?: string): void;
   selectPersonal(): void;
@@ -121,34 +138,66 @@ interface AppContextValue {
   createEvent(input: CreateEventInput): string;
   updateEvent(eventId: string, input: Partial<UpdateEventInput>): void;
   deleteEvent(eventId: string): void;
-  addExpense(input: AddExpenseInput): Promise<string>;
-  updateExpense(expenseId: string, input: AddExpenseInput): Promise<void>;
-  setExpenseReportingRate(expenseId: string, rate: number): void;
-  deleteExpense(expenseId: string): void;
+  addRecord(input: AddRecordInput): Promise<string>;
+  updateRecord(recordId: string, input: AddRecordInput): Promise<void>;
+  setRecordReportingRate(recordId: string, rate: number): void;
+  deleteRecord(recordId: string): void;
   addDebtRecords(inputs: AddDebtRecordInput[], photos?: File[]): Promise<string[]>;
   updateDebtRecord(debtRecordId: string, input: AddDebtRecordInput, photos?: File[]): Promise<void>;
   updateDebtRecordStatus(debtRecordId: string, status: DebtStatus): void;
   addCategory(name: string, emoji: string): string;
   recordSettlement(input: RecordSettlementInput): string;
-  createInvitation(groupId: string, input?: Partial<Pick<GroupInvitation, "approvalRequired" | "defaultRole" | "expiresAt" | "maxUses">>): string;
-  revokeInvitation(invitationId: string): void;
-  requestJoin(token: string): "created" | "duplicate" | "invalid";
-  reviewJoinRequest(requestId: string, decision: "approved" | "rejected", role?: Exclude<MemberRole, "owner">): void;
-  syncNow(): Promise<void>;
-  resetDemo(): Promise<void>;
+  createInvitation(groupId: string, input?: Partial<Pick<GroupInvitation, "approvalRequired" | "defaultRole" | "expiresAt" | "maxUses">>): Promise<string>;
+  revokeInvitation(invitationId: string): Promise<void>;
+  resolveInvitation(token: string): Promise<GroupInvitationPreview | undefined>;
+  requestJoin(token: string): Promise<"created" | "duplicate" | "invalid" | "approved">;
+  refreshJoinRequests(groupId: string): Promise<void>;
+  reviewJoinRequest(requestId: string, decision: "approved" | "rejected", role?: Exclude<MemberRole, "owner">): Promise<void>;
+  syncNow(options?: { allowGoogleFolderCreation?: boolean }): Promise<void>;
+  confirmGoogleFolderCreation(): Promise<void>;
+  dismissGoogleFolderCreation(): void;
+  resolveSyncConflict(entityId: string, choice: "phone" | "google"): Promise<"resolved" | "owner-required">;
+  dismissGroupDeletionNotice(groupId: string): void;
+  resetPhoneData(): Promise<void>;
+  factoryReset(): Promise<void>;
+  restoreMockRecords(): Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
-const SELECTED_CONTEXT_KEY = "bill-moshi-selected-group";
+const SELECTED_CONTEXT_KEY = "bill-moshi-records-selected-group";
 const PERSONAL_CONTEXT_VALUE = "myself";
+const GOOGLE_FOLDER_CREATION_REQUIRED = "GOOGLE_ROOT_FOLDER_CREATION_REQUIRED";
+
+class GoogleFolderCreationRequiredError extends Error {
+  constructor() {
+    super("Google Drive folder creation needs confirmation.");
+    this.name = "GoogleFolderCreationRequiredError";
+  }
+}
 
 function id(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`;
+  return createClientId(prefix);
 }
+
 
 function invitationToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+async function collaborationRequest<T>(input: RequestInfo | URL, init?: RequestInit) {
+  const response = await fetch(input, { ...init, headers: { "Content-Type": "application/json", ...init?.headers }, cache: "no-store" });
+  const result = await response.json() as T & { error?: string };
+  if (!response.ok) throw new Error(result.error ?? "Collaboration request failed.");
+  return result;
+}
+
+function mergeRemoteById<T extends { id: string }>(local: T[], remote: T[], protectedIds: ReadonlySet<string>) {
+  const remoteById = new Map(remote.map((item) => [item.id, item]));
+  return [
+    ...local.map((item) => protectedIds.has(item.id) ? item : remoteById.get(item.id) ?? item),
+    ...remote.filter((item) => !local.some((existing) => existing.id === item.id)),
+  ];
 }
 
 function groupMemberToEventMember(groupMember: GroupMember, eventId: string): EventMember {
@@ -165,103 +214,11 @@ function groupMemberToEventMember(groupMember: GroupMember, eventId: string): Ev
   };
 }
 
-function completeEventMemberships(events: BillEvent[], groupMembers: GroupMember[], eventMembers: EventMember[]) {
-  const completed = eventMembers.map((member) => ({ ...member }));
-
-  for (const event of events) {
-    for (const groupMember of groupMembers.filter((member) => member.groupId === event.groupId)) {
-      const existingIndex = completed.findIndex(
-        (member) => member.eventId === event.id && member.userId === groupMember.userId,
-      );
-      if (existingIndex >= 0) {
-        completed[existingIndex] = {
-          ...completed[existingIndex],
-          name: groupMember.name,
-          email: groupMember.email,
-          role: groupMember.role,
-          status: groupMember.status,
-          avatarColor: groupMember.avatarColor,
-        };
-      } else if (groupMember.status === "active") {
-        completed.push(groupMemberToEventMember(groupMember, event.id));
-      }
-    }
-  }
-
-  return completed;
-}
-
-function migrateSnapshot(saved: AppSnapshot): AppSnapshot {
-  const legacy = saved as unknown as Omit<AppSnapshot, "currentUser" | "groups" | "groupMembers" | "events" | "expenses" | "debtRecords" | "invitations" | "joinRequests"> & {
-    currentUser: Omit<AppSnapshot["currentUser"], "defaultCurrency"> & { defaultCurrency?: CurrencyCode };
-    groups?: Array<Omit<Group, "currency"> & { currency?: CurrencyCode }>;
-    groupMembers?: GroupMember[];
-    events: Array<BillEvent & { groupId?: string }>;
-    expenses: Array<Omit<Expense, "groupId" | "eventId" | "recordType"> & { groupId?: string; eventId?: string; recordType?: RecordType }>;
-    debtRecords?: Array<Omit<DebtRecord, "status" | "name"> & { name?: string; status: DebtStatus | "open" | "settled" }>;
-    invitations: Array<GroupInvitation & { eventId?: string; groupId?: string }>;
-    joinRequests: Array<JoinRequest & { eventId?: string; groupId?: string }>;
-  };
-  const currentUser = { ...legacy.currentUser, defaultCurrency: legacy.currentUser.defaultCurrency ?? "CAD" as const };
-  const groups: Group[] = legacy.groups?.length
-    ? legacy.groups.map((group) => ({ ...group, currency: group.currency ?? currentUser.defaultCurrency }))
-    : seedSnapshot.groups;
-  const fallbackGroupId = groups[0]?.id ?? seedSnapshot.groups[0].id;
-  const events = legacy.events.map((event) => ({
-    ...event,
-    groupId: event.groupId
-      ?? seedSnapshot.events.find((seedEvent) => seedEvent.id === event.id)?.groupId
-      ?? fallbackGroupId,
-  }));
-  const groupIdForEvent = (eventId?: string) => events.find((event) => event.id === eventId)?.groupId ?? fallbackGroupId;
-  const derivedGroupMembers = groups.flatMap((group) => {
-    const groupEventIds = new Set(events.filter((event) => event.groupId === group.id).map((event) => event.id));
-    const byUser = new Map<string, EventMember>();
-    for (const member of legacy.members.filter((item) => groupEventIds.has(item.eventId))) {
-      const current = byUser.get(member.userId);
-      if (!current || member.role === "owner") byUser.set(member.userId, member);
-    }
-    if (!byUser.has(group.ownerId)) {
-      byUser.set(group.ownerId, {
-        id: "legacy-owner",
-        eventId: "",
-        userId: group.ownerId,
-        name: group.ownerId === legacy.currentUser.id ? legacy.currentUser.name : "Owner",
-        email: group.ownerId === legacy.currentUser.id ? legacy.currentUser.email : "",
-        role: "owner",
-        status: "active",
-        joinedAt: group.createdAt,
-        avatarColor: "#2F80ED",
-      });
-    }
-    return [...byUser.values()].map((member) => ({ ...member, id: `group-member-${group.id}-${member.userId}`, groupId: group.id }));
-  });
-  const groupMembers = legacy.groupMembers?.length ? legacy.groupMembers : derivedGroupMembers;
-  return {
-    ...legacy,
-    currentUser,
-    groups,
-    groupMembers,
-    events,
-    members: completeEventMemberships(events, groupMembers, legacy.members),
-    expenses: legacy.expenses.map((expense) => ({
-      ...expense,
-      recordType: expense.recordType ?? "expense",
-      groupId: expense.groupId ?? (expense.eventId ? groupIdForEvent(expense.eventId) : undefined),
-    })),
-    debtRecords: (legacy.debtRecords ?? []).map((record) => ({
-      ...record,
-      name: record.name ?? "",
-      status: record.status === "open" ? "unpaid" : record.status === "settled" ? "paid" : record.status,
-    })),
-    invitations: legacy.invitations.map((invitation) => ({ ...invitation, groupId: invitation.groupId ?? groupIdForEvent(invitation.eventId) })),
-    joinRequests: legacy.joinRequests.map((request) => ({ ...request, groupId: request.groupId ?? groupIdForEvent(request.eventId) })),
-  };
-}
 
 export function BillMoshiProvider({ children }: { children: ReactNode }) {
+  const [startupMessage, setStartupMessage] = useState("Preparing your device…");
   const { data: session, status } = useSession();
-  const [snapshot, setSnapshot] = useState<AppSnapshot>(seedSnapshot);
+  const [snapshot, setSnapshot] = useState<AppSnapshot>(() => emptySnapshot());
   const [selectedGroupId, setSelectedGroupId] = useState<string>();
   const [personalContext, setPersonalContext] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -269,24 +226,47 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [autoSyncPaused, setAutoSyncPaused] = useState(false);
+  const [restoreMode, setRestoreModeState] = useState(false);
+  const restoreModeRef = useRef(false);
+  const setRestoreMode = useCallback((active: boolean) => { restoreModeRef.current = active; setRestoreModeState(active); }, []);
   const syncInFlightRef = useRef(false);
   const quotaBackoffUntilRef = useRef(0);
   const quotaBackoffAttemptRef = useRef(0);
   const quotaRetryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const initialSharedPullRef = useRef(false);
   const [syncMessage, setSyncMessage] = useState("Saved on this device");
+  const [syncConflicts, setSyncConflicts] = useState<RecordSyncConflict[]>([]);
+  const [googleFolderCreationRequired, setGoogleFolderCreationRequired] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<string>();
-  const googleConnected = status === "authenticated" && Boolean(session?.accessToken);
+  const googleConnected = status === "authenticated" && Boolean(session?.googleConnected);
 
   const refreshPending = useCallback(async () => {
     setPendingCount((await listPendingOperations()).length);
   }, []);
 
+  const { saveRecurringPayment, changeRecurringPayment, recurringError } = useRecurringPayments(snapshot, setSnapshot, hydrated && status !== "loading" && !restoreMode, refreshPending);
+
+  const restoreGoogleBackup = useCallback(async (preview: RestorePreview, restoreCurrency = false) => {
+    if (!hydrated || !googleConnected || !restoreModeRef.current) throw new Error("Open Restore from Google Drive while signed in to your Google account.");
+    if (syncInFlightRef.current) throw new Error("Wait for the current sync to finish, then restore again.");
+    if (preview.accountEmail.toLowerCase() !== session?.user?.email?.toLowerCase()) throw new Error("Your Google account changed. Load a new preview.");
+    await saveSnapshot(snapshot);
+    const result = await restoreFromPreview(preview, snapshot, restoreCurrency);
+    setSnapshot(result.snapshot);
+    await refreshPending();
+    setSyncMessage(`Restored ${result.summary.records} records from Google Drive`);
+    return result.summary;
+  }, [googleConnected, hydrated, refreshPending, session?.user?.email, snapshot]);
+
   useEffect(() => {
     let active = true;
     void (async () => {
-      const saved = await loadSnapshot();
+      const saved = await loadSnapshot(() => {
+        if (active) setStartupMessage("Close other Bill Moshi tabs and app windows to finish clearing the old phone data.");
+      });
       if (!active) return;
-      const nextSnapshot = migrateSnapshot(saved ?? seedSnapshot);
+      const nextSnapshot = saved ?? emptySnapshot();
+      localStorage.removeItem("bill-moshi-selected-group");
       setSnapshot(nextSnapshot);
       const storedContext = localStorage.getItem(SELECTED_CONTEXT_KEY) ?? undefined;
       setPersonalContext(storedContext === PERSONAL_CONTEXT_VALUE);
@@ -294,7 +274,9 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       setIsOnline(navigator.onLine);
       await refreshPending();
       setHydrated(true);
-    })();
+    })().catch((error: unknown) => {
+      if (active) setStartupMessage(error instanceof Error ? error.message : "Device storage could not be opened. Reopen the app to try again.");
+    });
     return () => {
       active = false;
     };
@@ -314,13 +296,17 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(SELECTED_CONTEXT_KEY, PERSONAL_CONTEXT_VALUE);
   }, []);
 
+  const dismissGroupDeletionNotice = useCallback((groupId: string) => {
+    setSnapshot((current) => ({ ...current, groupDeletionNotices: current.groupDeletionNotices.filter((notice) => notice.groupId !== groupId) }));
+  }, []);
+
   useEffect(() => {
     if (!hydrated) return;
     void saveSnapshot(snapshot);
   }, [hydrated, snapshot]);
 
   useEffect(() => {
-    if (status !== "authenticated" || !session?.user?.email) return;
+    if (!hydrated || status !== "authenticated" || !session?.user?.email) return;
     const email = session.user.email;
     const name = session.user.name || email.split("@")[0];
     const image = session.user.image ?? undefined;
@@ -333,7 +319,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
           : undefined;
       return bindSnapshotIdentity(current, { id: googleUserId, name, email, image }, sourceUserId);
     }));
-  }, [session?.user?.email, session?.user?.image, session?.user?.name, status]);
+  }, [hydrated, session?.user?.email, session?.user?.image, session?.user?.name, status]);
 
   useEffect(() => {
     const online = () => setIsOnline(true);
@@ -386,7 +372,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       role: "owner",
       status: "active",
       joinedAt: timestamp,
-      avatarColor: "#2F80ED",
+      avatarColor: "var(--color-avatar-brand)",
     };
     setSnapshot((current) => ({
       ...current,
@@ -451,6 +437,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
   }, [enqueue, snapshot]);
 
   const deleteGroup = useCallback((groupId: string) => {
+    const group = snapshot.groups.find((item) => item.id === groupId);
     const nextSnapshot = deleteGroupData(snapshot, groupId, snapshot.currentUser.id);
     setSnapshot(nextSnapshot);
     if (localStorage.getItem(SELECTED_CONTEXT_KEY) === groupId) localStorage.removeItem(SELECTED_CONTEXT_KEY);
@@ -460,7 +447,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       entityType: "group",
       entityId: groupId,
       action: "delete",
-      payload: { groupId, requestedBy: snapshot.currentUser.id },
+      payload: { groupId, groupName: group?.name, requestedBy: snapshot.currentUser.id },
     });
   }, [enqueue, snapshot]);
 
@@ -512,18 +499,18 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       ...current,
       events: current.events.filter((event) => event.id !== eventId),
       members: current.members.filter((member) => member.eventId !== eventId),
-      expenses: current.expenses.filter((expense) => expense.eventId !== eventId),
+      records: current.records.filter((record) => record.eventId !== eventId),
     }));
     void enqueue({ entityType: "event", entityId: eventId, action: "delete", payload: { eventId, groupId } });
   }, [enqueue, snapshot.events]);
 
-  const addExpense = useCallback(async (input: AddExpenseInput) => {
+  const addRecord = useCallback(async (input: AddRecordInput) => {
     const group = snapshot.groups.find((item) => item.id === input.groupId);
     const event = input.eventId
       ? snapshot.events.find((item) => item.id === input.eventId && item.groupId === input.groupId)
       : undefined;
     if (input.groupId && !group) throw new Error("Group not found.");
-    if (!input.groupId && input.eventId) throw new Error("A personal expense cannot belong to an event.");
+    if (!input.groupId && input.eventId) throw new Error("A personal record cannot belong to an event.");
     if (input.eventId && !event) throw new Error("Choose an event from this group.");
     if (input.recordType === "transfer" && !input.groupId) throw new Error("Choose a group to transfer money between members.");
     if (input.recordType === "transfer" && (input.splitInputs.length !== 1 || input.splitInputs[0].memberId === input.payerId)) {
@@ -532,7 +519,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     if (!input.groupId && (input.payerId !== snapshot.currentUser.id || input.splitInputs.some((split) => split.memberId !== snapshot.currentUser.id))) {
       throw new Error("Personal records can only be assigned to you.");
     }
-    const expenseId = id("expense");
+    const recordId = id("record");
     const timestamp = new Date().toISOString();
     const baseCurrency = input.baseCurrency ?? event?.baseCurrency ?? group?.currency ?? snapshot.currentUser.defaultCurrency;
     const converted = input.currencyOriginal !== baseCurrency;
@@ -547,14 +534,14 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     const splitInputs = input.recordType === "transfer"
       ? [{ memberId: input.splitInputs[0].memberId, value: amountBase }]
       : input.splitInputs;
-    const splits = allocateSplits(expenseId, amountBase, baseCurrency, splitMethod, splitInputs);
+    const splits = allocateSplits(recordId, amountBase, baseCurrency, splitMethod, splitInputs);
     let localReceiptId: string | undefined;
     if (input.receipt) {
       localReceiptId = id("receipt");
       await saveReceipt(localReceiptId, input.receipt);
     }
-    const expense = {
-      id: expenseId,
+    const record = {
+      id: recordId,
       recordType: input.recordType,
       groupId: input.groupId,
       eventId: event?.id,
@@ -588,27 +575,27 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     };
     setSnapshot((current) => ({
       ...current,
-      expenses: [expense, ...current.expenses],
-      activity: [{ id: id("activity"), groupId: input.groupId, eventId: event?.id, actorId: current.currentUser.id, type: "expense_created", title: `${expense.description} ${expense.recordType} added`, detail: `${expense.currencyOriginal} ${expense.amountOriginal.toFixed(expense.currencyOriginal === "JPY" ? 0 : 2)}`, createdAt: timestamp }, ...current.activity],
+      records: [record, ...current.records],
+      activity: [{ id: id("activity"), groupId: input.groupId, eventId: event?.id, actorId: current.currentUser.id, type: "record_created", title: `${record.description} ${record.recordType} added`, detail: `${record.currencyOriginal} ${record.amountOriginal.toFixed(record.currencyOriginal === "JPY" ? 0 : 2)}`, createdAt: timestamp }, ...current.activity],
     }));
     const eventMembers = event ? snapshot.members.filter((member) => member.eventId === event.id) : undefined;
-    await enqueue({ entityType: "expense", entityId: expenseId, action: "upsert", payload: { expense, category: snapshot.categories.find((item) => item.id === expense.categoryId), eventMembers } });
-    return expenseId;
+    await enqueue({ entityType: "record", entityId: recordId, action: "upsert", payload: { record, baseVersion: 0, category: snapshot.categories.find((item) => item.id === record.categoryId), eventMembers } });
+    return recordId;
   }, [enqueue, snapshot.categories, snapshot.currentUser.defaultCurrency, snapshot.currentUser.id, snapshot.events, snapshot.groups, snapshot.members]);
 
-  const deleteExpense = useCallback((expenseId: string) => {
-    const expense = snapshot.expenses.find((item) => item.id === expenseId);
-    if (!expense) return;
-    setSnapshot((current) => ({ ...current, expenses: current.expenses.filter((expense) => expense.id !== expenseId) }));
-    void enqueue({ entityType: "expense", entityId: expenseId, action: "delete", payload: { expenseId, groupId: expense.groupId } });
-  }, [enqueue, snapshot.expenses]);
+  const deleteRecord = useCallback((recordId: string) => {
+    const record = snapshot.records.find((item) => item.id === recordId);
+    if (!record) return;
+    setSnapshot((current) => ({ ...current, records: current.records.filter((record) => record.id !== recordId) }));
+    void enqueue({ entityType: "record", entityId: recordId, action: "delete", payload: { recordId, groupId: record.groupId, baseVersion: record.version, baseFingerprint: recordSyncFingerprint(record) } });
+  }, [enqueue, snapshot.records]);
 
-  const setExpenseReportingRate = useCallback((expenseId: string, rate: number) => {
-    const existing = snapshot.expenses.find((expense) => expense.id === expenseId);
+  const setRecordReportingRate = useCallback((recordId: string, rate: number) => {
+    const existing = snapshot.records.find((record) => record.id === recordId);
     if (!existing) throw new Error("Record not found.");
     if (!Number.isFinite(rate) || rate <= 0) throw new Error("Exchange rate must be above zero.");
     const reportingCurrency = snapshot.currentUser.defaultCurrency;
-    const updated: Expense = {
+    const updated: LedgerRecord = {
       ...existing,
       reportingCurrency,
       baseToReportingRate: rate,
@@ -620,10 +607,10 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       version: existing.version + 1,
       syncStatus: "pending",
     };
-    setSnapshot((current) => ({ ...current, expenses: current.expenses.map((expense) => expense.id === expenseId ? updated : expense) }));
+    setSnapshot((current) => ({ ...current, records: current.records.map((record) => record.id === recordId ? updated : record) }));
     const eventMembers = updated.eventId ? snapshot.members.filter((member) => member.eventId === updated.eventId) : undefined;
-    void enqueue({ entityType: "expense", entityId: expenseId, action: "upsert", payload: { expense: updated, category: snapshot.categories.find((item) => item.id === updated.categoryId), eventMembers } });
-  }, [enqueue, snapshot.categories, snapshot.currentUser.defaultCurrency, snapshot.expenses, snapshot.members]);
+    void enqueue({ entityType: "record", entityId: recordId, action: "upsert", payload: { record: updated, baseVersion: existing.version, baseFingerprint: recordSyncFingerprint(existing), category: snapshot.categories.find((item) => item.id === updated.categoryId), eventMembers } });
+  }, [enqueue, snapshot.categories, snapshot.currentUser.defaultCurrency, snapshot.records, snapshot.members]);
 
   const addDebtRecords = useCallback(async (inputs: AddDebtRecordInput[], photos: File[] = []) => {
     if (inputs.length === 0) throw new Error("Enter at least one person's name.");
@@ -719,15 +706,16 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     void enqueue({ entityType: "debt_record", entityId: debtRecordId, action: "upsert", payload: { debtRecord } });
   }, [enqueue, snapshot.debtRecords]);
 
-  const updateExpense = useCallback(async (expenseId: string, input: AddExpenseInput) => {
-    const existing = snapshot.expenses.find((expense) => expense.id === expenseId);
+  const updateRecord = useCallback(async (recordId: string, input: AddRecordInput) => {
+    const existing = snapshot.records.find((record) => record.id === recordId);
     const group = snapshot.groups.find((item) => item.id === input.groupId);
     const event = input.eventId
       ? snapshot.events.find((item) => item.id === input.eventId && item.groupId === input.groupId)
       : undefined;
-    if (!existing) throw new Error("Expense not found.");
+    if (!existing) throw new Error("Record not found.");
+    if (existing.recurringPaymentId && (input.groupId || input.eventId || input.recordType !== "expense")) throw new Error("Recurring payments must remain personal expenses.");
     if (input.groupId && !group) throw new Error("Group not found.");
-    if (!input.groupId && input.eventId) throw new Error("A personal expense cannot belong to an event.");
+    if (!input.groupId && input.eventId) throw new Error("A personal record cannot belong to an event.");
     if (input.eventId && !event) throw new Error("Choose an event from this group.");
     if (input.recordType === "transfer" && !input.groupId) throw new Error("Choose a group to transfer money between members.");
     if (input.recordType === "transfer" && (input.splitInputs.length !== 1 || input.splitInputs[0].memberId === input.payerId)) {
@@ -780,17 +768,17 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       version: existing.version + 1,
       syncStatus: "pending" as const,
       splits: allocateSplits(
-        expenseId,
+        recordId,
         amountBase,
         baseCurrency,
         input.recordType === "transfer" ? "exact" : input.splitMethod,
         input.recordType === "transfer" ? [{ memberId: input.splitInputs[0].memberId, value: amountBase }] : input.splitInputs,
       ),
     };
-    setSnapshot((current) => ({ ...current, expenses: current.expenses.map((expense) => expense.id === expenseId ? updated : expense) }));
+    setSnapshot((current) => ({ ...current, records: current.records.map((record) => record.id === recordId ? updated : record) }));
     const eventMembers = event ? snapshot.members.filter((member) => member.eventId === event.id) : undefined;
-    await enqueue({ entityType: "expense", entityId: expenseId, action: "upsert", payload: { expense: updated, category: snapshot.categories.find((item) => item.id === updated.categoryId), eventMembers } });
-  }, [enqueue, snapshot.categories, snapshot.currentUser.defaultCurrency, snapshot.currentUser.id, snapshot.events, snapshot.expenses, snapshot.groups, snapshot.members]);
+    await enqueue({ entityType: "record", entityId: recordId, action: "upsert", payload: { record: updated, baseVersion: existing.version, baseFingerprint: recordSyncFingerprint(existing), category: snapshot.categories.find((item) => item.id === updated.categoryId), eventMembers } });
+  }, [enqueue, snapshot.categories, snapshot.currentUser.defaultCurrency, snapshot.currentUser.id, snapshot.events, snapshot.records, snapshot.groups, snapshot.members]);
 
   const addCategory = useCallback((name: string, emoji: string) => {
     const categoryId = id("category");
@@ -815,7 +803,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     return settlementId;
   }, [enqueue, snapshot.currentUser.id, snapshot.events]);
 
-  const createInvitation = useCallback((groupId: string, input: Partial<Pick<GroupInvitation, "approvalRequired" | "defaultRole" | "expiresAt" | "maxUses">> = {}) => {
+  const createInvitation = useCallback(async (groupId: string, input: Partial<Pick<GroupInvitation, "approvalRequired" | "defaultRole" | "expiresAt" | "maxUses">> = {}) => {
     const group = snapshot.groups.find((item) => item.id === groupId);
     if (!group || group.ownerId !== snapshot.currentUser.id) throw new Error("Only the group owner can create an invitation.");
     const invitationId = id("invite");
@@ -833,6 +821,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       isActive: true,
       createdAt: timestamp,
     };
+    await collaborationRequest("/api/collaboration", { method: "POST", body: JSON.stringify({ action: "create", invitation, group }) });
     setSnapshot((current) => ({
       ...current,
       invitations: [invitation, ...current.invitations],
@@ -842,10 +831,11 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     return invitation.token;
   }, [enqueue, snapshot.currentUser.id, snapshot.groups]);
 
-  const revokeInvitation = useCallback((invitationId: string) => {
+  const revokeInvitation = useCallback(async (invitationId: string) => {
     const timestamp = new Date().toISOString();
     const invitation = snapshot.invitations.find((item) => item.id === invitationId);
     if (!invitation) return;
+    await collaborationRequest("/api/collaboration", { method: "POST", body: JSON.stringify({ action: "revoke", invitationId }) });
     const updated = { ...invitation, isActive: false, revokedAt: timestamp };
     setSnapshot((current) => ({
       ...current,
@@ -855,36 +845,61 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     void enqueue({ entityType: "invitation", entityId: invitationId, action: "upsert", payload: { invitation: updated } });
   }, [enqueue, snapshot.invitations]);
 
-  const requestJoin = useCallback((token: string) => {
-    const invitation = snapshot.invitations.find((item) => item.token === token);
-    if (!invitation || !invitation.isActive || (invitation.expiresAt && new Date(invitation.expiresAt) < new Date()) || (invitation.maxUses && invitation.useCount >= invitation.maxUses)) return "invalid";
-    const duplicate = snapshot.joinRequests.some((request) => request.groupId === invitation.groupId && request.requesterUserId === snapshot.currentUser.id && request.status === "pending");
-    const activeMember = snapshot.groupMembers.some((member) => member.groupId === invitation.groupId && member.userId === snapshot.currentUser.id && member.status === "active");
-    if (duplicate || activeMember) return "duplicate";
+  const adoptApprovedInvitation = useCallback((preview: GroupInvitationPreview) => {
     const timestamp = new Date().toISOString();
-    const request: JoinRequest = { id: id("request"), invitationId: invitation.id, groupId: invitation.groupId, requesterUserId: snapshot.currentUser.id, requesterName: snapshot.currentUser.name, requesterEmail: snapshot.currentUser.email, status: invitation.approvalRequired ? "pending" : "approved", requestedAt: timestamp, assignedRole: invitation.approvalRequired ? undefined : invitation.defaultRole };
-    const groupMember: GroupMember | undefined = invitation.approvalRequired ? undefined : { id: id("group-member"), groupId: invitation.groupId, userId: snapshot.currentUser.id, name: snapshot.currentUser.name, email: snapshot.currentUser.email, role: invitation.defaultRole, status: "active", joinedAt: timestamp, avatarColor: "#27AE60" };
-    const eventMembers = groupMember ? snapshot.events.filter((event) => event.groupId === invitation.groupId).map((event) => groupMemberToEventMember(groupMember, event.id)) : [];
+    setSnapshot((current) => {
+      const groupMember: GroupMember = {
+        id: id("group-member"), groupId: preview.group.id, userId: current.currentUser.id,
+        name: current.currentUser.name, email: current.currentUser.email, role: preview.defaultRole,
+        status: "active", joinedAt: timestamp, avatarColor: "var(--color-avatar-success)",
+      };
+      return {
+        ...current,
+        groups: current.groups.some((item) => item.id === preview.group.id) ? current.groups : [...current.groups, preview.group],
+        groupMembers: current.groupMembers.some((item) => item.groupId === preview.group.id && item.userId === current.currentUser.id)
+          ? current.groupMembers
+          : [...current.groupMembers, groupMember],
+      };
+    });
+  }, []);
+
+  const resolveInvitation = useCallback(async (token: string) => {
+    try {
+      const result = await collaborationRequest<{ preview: GroupInvitationPreview }>(`/api/collaboration?token=${encodeURIComponent(token)}`);
+      if (result.preview.requestStatus === "approved") adoptApprovedInvitation(result.preview);
+      return result.preview;
+    } catch {
+      return undefined;
+    }
+  }, [adoptApprovedInvitation]);
+
+  const requestJoin = useCallback(async (token: string) => {
+    try {
+      const result = await collaborationRequest<{ status: "created" | "duplicate" | "invalid" | "approved"; preview?: GroupInvitationPreview }>("/api/collaboration", { method: "POST", body: JSON.stringify({ action: "request", token }) });
+      if (result.status === "approved" && result.preview) adoptApprovedInvitation(result.preview);
+      return result.status;
+    } catch {
+      return "invalid" as const;
+    }
+  }, [adoptApprovedInvitation]);
+
+  const refreshJoinRequests = useCallback(async (groupId: string) => {
+    const result = await collaborationRequest<{ requests: JoinRequest[] }>(`/api/collaboration?groupId=${encodeURIComponent(groupId)}`);
     setSnapshot((current) => ({
       ...current,
-      invitations: current.invitations.map((item) => item.id === invitation.id ? { ...item, useCount: item.useCount + 1 } : item),
-      joinRequests: [request, ...current.joinRequests],
-      groupMembers: groupMember ? [...current.groupMembers, groupMember] : current.groupMembers,
-      members: eventMembers.length > 0 ? [...current.members, ...eventMembers] : current.members,
-      activity: [{ id: id("activity"), groupId: invitation.groupId, actorId: current.currentUser.id, type: "join_requested", title: `${current.currentUser.name} requested to join`, detail: invitation.approvalRequired ? "Waiting for owner approval" : "Group access approved", createdAt: timestamp }, ...current.activity],
+      joinRequests: [...current.joinRequests.filter((item) => item.groupId !== groupId || item.status !== "pending"), ...result.requests],
     }));
-    void enqueue({ entityType: "join_request", entityId: request.id, action: "upsert", payload: { request, groupMember, eventMembers } });
-    return "created";
-  }, [enqueue, snapshot]);
+  }, []);
 
-  const reviewJoinRequest = useCallback((requestId: string, decision: "approved" | "rejected", role: Exclude<MemberRole, "owner"> = "member") => {
+  const reviewJoinRequest = useCallback(async (requestId: string, decision: "approved" | "rejected", role: Exclude<MemberRole, "owner"> = "member") => {
     const timestamp = new Date().toISOString();
     const request = snapshot.joinRequests.find((item) => item.id === requestId);
     if (!request || request.status !== "pending") return;
     const group = snapshot.groups.find((item) => item.id === request.groupId);
     if (!group || group.ownerId !== snapshot.currentUser.id) return;
+    await collaborationRequest("/api/collaboration", { method: "POST", body: JSON.stringify({ action: "review", requestId, decision, role }) });
     const updated: JoinRequest = { ...request, status: decision, assignedRole: decision === "approved" ? role : undefined, reviewedBy: snapshot.currentUser.id, reviewedAt: timestamp };
-    const groupMember: GroupMember | undefined = decision === "approved" ? { id: id("group-member"), groupId: request.groupId, userId: request.requesterUserId, name: request.requesterName, email: request.requesterEmail, role, status: "active", joinedAt: timestamp, avatarColor: "#27AE60" } : undefined;
+    const groupMember: GroupMember | undefined = decision === "approved" ? { id: id("group-member"), groupId: request.groupId, userId: request.requesterUserId, name: request.requesterName, email: request.requesterEmail, role, status: "active", joinedAt: timestamp, avatarColor: "var(--color-avatar-success)" } : undefined;
     const eventMembers = groupMember ? snapshot.events.filter((event) => event.groupId === request.groupId).map((event) => groupMemberToEventMember(groupMember, event.id)) : [];
     setSnapshot((current) => ({
       ...current,
@@ -896,8 +911,66 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
     void enqueue({ entityType: "join_request", entityId: requestId, action: "upsert", payload: { request: updated, groupMember, eventMembers } });
   }, [enqueue, snapshot.currentUser.id, snapshot.events, snapshot.groups, snapshot.joinRequests]);
 
-  const syncNow = useCallback(async () => {
-    if (syncInFlightRef.current) return;
+  const resolveSyncConflict = useCallback(async (entityId: string, choice: "phone" | "google") => {
+    const conflict = syncConflicts.find((item) => item.entityId === entityId);
+    if (!conflict) return "resolved" as const;
+    const group = snapshot.groups.find((item) => item.id === conflict.groupId);
+    const ownerMember = snapshot.groupMembers.find((member) => member.groupId === conflict.groupId && member.role === "owner" && member.status === "active");
+    const isOwner = Boolean(group && (group.ownerId === snapshot.currentUser.id || ownerMember?.userId === snapshot.currentUser.id || ownerMember?.email.toLowerCase() === snapshot.currentUser.email.toLowerCase()));
+    if (choice === "phone" && !isOwner) {
+      setSyncMessage("Phone copy kept locally — only the Group owner can replace the Google Sheet copy");
+      setAutoSyncPaused(true);
+      return "owner-required" as const;
+    }
+    const queued = await listPendingOperations();
+    await removePendingOperations(queued.filter((operation) => operation.entityType === "record" && operation.entityId === entityId).map((operation) => operation.id));
+    if (choice === "google") {
+      setSnapshot((current) => ({
+        ...current,
+        records: conflict.remoteRecord
+          ? [conflict.remoteRecord, ...current.records.filter((record) => record.id !== entityId)]
+          : current.records.filter((record) => record.id !== entityId),
+      }));
+      setSyncMessage("Conflict resolved with the Google Sheet copy");
+    } else {
+      const local = snapshot.records.find((record) => record.id === entityId);
+      const operationId = id("operation");
+      if (conflict.localAction === "delete") {
+        await queueOperation({ id: operationId, idempotencyKey: operationId, entityType: "record", entityId, action: "delete", payload: { groupId: conflict.groupId, baseVersion: conflict.remoteVersion, baseFingerprint: conflict.remoteRecord ? recordSyncFingerprint(conflict.remoteRecord) : undefined, force: true }, createdAt: new Date().toISOString(), attempts: 0, status: "pending" });
+      } else {
+        if (!local) throw new Error("The phone copy is no longer available.");
+        const updated: LedgerRecord = { ...local, version: Math.max(local.version, conflict.remoteVersion) + 1, updatedAt: new Date().toISOString(), syncStatus: "pending" };
+        await queueOperation({
+          id: operationId,
+          idempotencyKey: operationId,
+          entityType: "record",
+          entityId,
+          action: "upsert",
+          payload: {
+            record: updated,
+            baseVersion: conflict.remoteVersion,
+            baseFingerprint: conflict.remoteRecord ? recordSyncFingerprint(conflict.remoteRecord) : undefined,
+            force: true,
+            category: snapshot.categories.find((category) => category.id === updated.categoryId),
+            eventMembers: updated.eventId ? snapshot.members.filter((member) => member.eventId === updated.eventId) : undefined,
+          },
+          createdAt: new Date().toISOString(),
+          attempts: 0,
+          status: "pending",
+        });
+        setSnapshot((current) => ({ ...current, records: current.records.map((record) => record.id === entityId ? updated : record) }));
+      }
+      setSyncMessage("Phone copy selected — ready to sync");
+    }
+    const remainingConflicts = syncConflicts.filter((item) => item.entityId !== entityId);
+    setSyncConflicts(remainingConflicts);
+    setAutoSyncPaused(remainingConflicts.length > 0);
+    await refreshPending();
+    return "resolved" as const;
+  }, [refreshPending, snapshot.categories, snapshot.currentUser.email, snapshot.currentUser.id, snapshot.records, snapshot.groupMembers, snapshot.groups, snapshot.members, syncConflicts]);
+
+  const syncNow = useCallback(async (options?: { allowGoogleFolderCreation?: boolean }) => {
+    if (syncInFlightRef.current || restoreModeRef.current) return;
     syncInFlightRef.current = true;
     let operations: PendingOperation[] = [];
     try {
@@ -910,7 +983,7 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
         setSyncMessage(`Google Sheets is cooling down — retrying in ${Math.ceil(quotaWaitMs / 1000)} seconds`);
         return;
       }
-      operations = (await listPendingOperations()).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+      operations = (await listPendingOperations()).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, 100);
       if (!googleConnected) {
         setSyncMessage(operations.length === 0 ? "Saved on this device" : `${operations.length} change${operations.length === 1 ? "" : "s"} saved locally — connect Google to sync`);
         return;
@@ -926,13 +999,13 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       for (const operation of operations) {
         const payload = operation.payload as {
           event?: Omit<BillEvent, "groupId"> & { groupId?: string };
-          expense?: Omit<Expense, "groupId"> & { groupId?: string };
+          record?: Omit<LedgerRecord, "groupId"> & { groupId?: string };
           debtRecord?: DebtRecord;
           invitation?: Omit<GroupInvitation, "groupId"> & { eventId?: string; groupId?: string };
           request?: Omit<JoinRequest, "groupId"> & { eventId?: string; groupId?: string };
         };
         if (payload.event && !payload.event.groupId) payload.event.groupId = snapshot.events.find((event) => event.id === payload.event?.id)?.groupId;
-        if (payload.expense?.eventId && !payload.expense.groupId) payload.expense.groupId = snapshot.events.find((event) => event.id === payload.expense?.eventId)?.groupId;
+        if (payload.record?.eventId && !payload.record.groupId) payload.record.groupId = snapshot.events.find((event) => event.id === payload.record?.eventId)?.groupId;
         if (payload.invitation && !payload.invitation.groupId) payload.invitation.groupId = snapshot.events.find((event) => event.id === payload.invitation?.eventId)?.groupId;
         if (payload.request && !payload.request.groupId) payload.request.groupId = snapshot.events.find((event) => event.id === payload.request?.eventId)?.groupId;
         if (operation.entityType === "debt_record" && payload.debtRecord?.localPhotoIds?.length) {
@@ -956,9 +1029,14 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
             form.set("recordId", operation.entityId);
             form.set("recordType", "debt_record");
             form.set("eventName", "Debt records");
+            form.set("allowRootCreation", String(Boolean(options?.allowGoogleFolderCreation)));
             const upload = await fetch("/api/receipts", { method: "POST", body: form });
-            if (!upload.ok) throw new Error(((await upload.json()) as { error?: string }).error ?? "Debt photo upload failed.");
-            const { fileId } = (await upload.json()) as { fileId: string };
+            const uploadResult = (await upload.json()) as { fileId?: string; error?: string; code?: string };
+            if (!upload.ok || !uploadResult.fileId) {
+              if (upload.status === 409 && uploadResult.code === GOOGLE_FOLDER_CREATION_REQUIRED) throw new GoogleFolderCreationRequiredError();
+              throw new Error(uploadResult.error ?? "Debt photo upload failed.");
+            }
+            const { fileId } = uploadResult;
             uploadedDebtPhotos.set(localPhotoId, fileId);
             photoFileIds[localPhotoId] = fileId;
             changed = true;
@@ -974,38 +1052,44 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
           }
           continue;
         }
-        if (operation.entityType !== "expense") continue;
-        const expensePayload = operation.payload as { expense?: { localReceiptId?: string; receiptFileId?: string; groupId?: string; eventId?: string } };
-        const expense = expensePayload.expense;
-        if (!expense?.localReceiptId || expense.receiptFileId) continue;
-        const receipt = await getReceipt(expense.localReceiptId);
+        if (operation.entityType !== "record") continue;
+        const recordPayload = operation.payload as { record?: { localReceiptId?: string; receiptFileId?: string; groupId?: string; eventId?: string; recordType?: LedgerRecord["recordType"] } };
+        const record = recordPayload.record;
+        if (!record?.localReceiptId || record.receiptFileId) continue;
+        const receipt = await getReceipt(record.localReceiptId);
         if (!receipt) continue;
-        const event = snapshot.events.find((item) => item.id === expense.eventId);
-        const group = snapshot.groups.find((item) => item.id === expense.groupId);
-        const eventName = !expense.groupId
+        const event = snapshot.events.find((item) => item.id === record.eventId);
+        const group = snapshot.groups.find((item) => item.id === record.groupId);
+        const eventName = !record.groupId
           ? "Myself - Personal records"
           : event
           ? `${group?.name ?? "Group"} - ${event.name}`
           : `${group?.name ?? "Group"} - Daily records`;
         const form = new FormData();
         form.set("file", new File([receipt.blob], receipt.name, { type: receipt.type }));
-        form.set("scope", expense.groupId ? "group" : "personal");
-        form.set("expenseId", operation.entityId);
-        if (expense.groupId) form.set("groupId", expense.groupId);
+        form.set("scope", record.groupId ? "group" : "personal");
+        form.set("recordId", operation.entityId);
+        form.set("recordType", record.recordType ?? "expense");
+        if (record.groupId) form.set("groupId", record.groupId);
         if (group?.name) form.set("groupName", group.name);
-        form.set("canCreateGroupWorkspace", String(Boolean(group && group.ownerId === snapshot.currentUser.id)));
         form.set("eventName", eventName);
+        form.set("allowRootCreation", String(Boolean(options?.allowGoogleFolderCreation)));
         const upload = await fetch("/api/receipts", { method: "POST", body: form });
-        if (!upload.ok) throw new Error(((await upload.json()) as { error?: string }).error ?? "Receipt upload failed.");
-        const { fileId } = (await upload.json()) as { fileId: string };
-        expense.receiptFileId = fileId;
-        operation.payload = expensePayload;
+        const uploadResult = (await upload.json()) as { fileId?: string; error?: string; code?: string };
+        if (!upload.ok || !uploadResult.fileId) {
+          if (upload.status === 409 && uploadResult.code === GOOGLE_FOLDER_CREATION_REQUIRED) throw new GoogleFolderCreationRequiredError();
+          throw new Error(uploadResult.error ?? "Receipt upload failed.");
+        }
+        const { fileId } = uploadResult;
+        record.receiptFileId = fileId;
+        operation.payload = recordPayload;
         await updatePendingOperation(operation);
-        setSnapshot((current) => ({ ...current, expenses: current.expenses.map((item) => item.id === operation.entityId ? { ...item, receiptFileId: fileId } : item) }));
+        setSnapshot((current) => ({ ...current, records: current.records.map((item) => item.id === operation.entityId ? { ...item, receiptFileId: fileId } : item) }));
       }
-      const response = await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operations, snapshot }) });
-      const result = (await response.json()) as { syncedOperationIds?: string[]; error?: string; retryAfterSeconds?: number };
+      const response = await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operations, snapshot, allowRootCreation: Boolean(options?.allowGoogleFolderCreation) }) });
+      const result = (await response.json()) as { syncedOperationIds?: string[]; conflicts?: RecordSyncConflict[]; pulledGroupIds?: string[]; remoteRecords?: LedgerRecord[]; remoteGroupStates?: RemoteGroupState[]; unavailableGroups?: Array<{ id: string; name: string }>; deletedGroups?: Array<{ id: string; name: string; deletedAt: string }>; error?: string; code?: string; retryAfterSeconds?: number };
       if (!response.ok || !result.syncedOperationIds) {
+        if (response.status === 409 && result.code === GOOGLE_FOLDER_CREATION_REQUIRED) throw new GoogleFolderCreationRequiredError();
         if (response.status === 429) {
           const retryAfterSeconds = Number.isFinite(result.retryAfterSeconds) ? Math.max(result.retryAfterSeconds ?? 60, 60) : 60;
           const backoffSeconds = Math.min(retryAfterSeconds * (2 ** quotaBackoffAttemptRef.current), 15 * 60);
@@ -1022,12 +1106,51 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
         throw new Error(result.error ?? "Google sync failed.");
       }
       await removePendingOperations(result.syncedOperationIds);
-      setSnapshot((current) => ({
+      const remainingOperations = await listPendingOperations();
+      const protectedRecordIds = new Set(remainingOperations.filter((operation) => operation.entityType === "record").map((operation) => operation.entityId));
+      const pulledGroupIds = new Set(result.pulledGroupIds ?? []);
+      const remoteRecords = result.remoteRecords ?? [];
+      const remoteGroupStates = result.remoteGroupStates ?? [];
+      const protectedIds = new Set(remainingOperations.map((operation) => operation.entityId));
+      const remoteGroups = remoteGroupStates.map((state) => state.group);
+      const remoteGroupMembers = remoteGroupStates.flatMap((state) => state.groupMembers);
+      const remoteEvents = remoteGroupStates.flatMap((state) => state.events);
+      const remoteMembers = remoteGroupStates.flatMap((state) => state.members);
+      const remoteCategories = remoteGroupStates.flatMap((state) => state.categories);
+      const remoteIds = new Set(remoteRecords.map((record) => record.id));
+      const unavailableGroups = result.unavailableGroups ?? [];
+      const deletedGroups = result.deletedGroups ?? [];
+      const detectedAt = new Date().toISOString();
+      setSnapshot((current) => removeDeletedGroups({
         ...current,
-        expenses: current.expenses.map((item) => result.syncedOperationIds?.some((operationId) => operations.find((operation) => operation.id === operationId)?.entityId === item.id) ? { ...item, syncStatus: "synced" } : item),
+        groups: mergeRemoteById(current.groups, remoteGroups, protectedIds),
+        groupMembers: mergeRemoteById(current.groupMembers, remoteGroupMembers, protectedIds),
+        events: mergeRemoteById(current.events, remoteEvents, protectedIds),
+        members: mergeRemoteById(current.members, remoteMembers, protectedIds),
+        categories: mergeRemoteById(current.categories, remoteCategories, protectedIds),
+        recurringPayments: current.recurringPayments.map((payment) => result.syncedOperationIds?.some((operationId) => {
+          const operation = operations.find((item) => item.id === operationId);
+          return operation?.entityType === "recurring_payment" && operation.entityId === payment.id && (operation.payload as { recurringPayment: { version: number } }).recurringPayment.version === payment.version;
+        }) ? { ...payment, syncStatus: "synced" } : payment),
+        records: [
+          ...remoteRecords.map((remote) => {
+            const local = current.records.find((record) => record.id === remote.id);
+            return protectedRecordIds.has(remote.id) && local ? local : { ...remote, localReceiptId: local?.localReceiptId, receiptName: local?.receiptName, syncStatus: "synced" as const };
+          }),
+          ...current.records.filter((record) => !remoteIds.has(record.id) && (!record.groupId || !pulledGroupIds.has(record.groupId) || protectedRecordIds.has(record.id))).map((item) => result.syncedOperationIds?.some((operationId) => operations.find((operation) => operation.id === operationId)?.entityId === item.id) ? { ...item, syncStatus: "synced" as const } : item),
+        ],
         debtRecords: current.debtRecords.map((item) => result.syncedOperationIds?.some((operationId) => operations.find((operation) => operation.id === operationId)?.entityId === item.id) ? { ...item, syncStatus: "synced" } : item),
         settlements: current.settlements.map((item) => result.syncedOperationIds?.some((operationId) => operations.find((operation) => operation.id === operationId)?.entityId === item.id) ? { ...item, syncStatus: "synced" } : item),
-      }));
+      }, deletedGroups, deletedGroups[0]?.deletedAt ?? detectedAt));
+      if (deletedGroups.some((group) => group.id === selectedGroupId)) {
+        setSelectedGroupId(undefined);
+        setPersonalContext(false);
+        localStorage.removeItem(SELECTED_CONTEXT_KEY);
+      }
+      if (result.conflicts?.length) {
+        setSyncConflicts((current) => [...new Map([...current, ...result.conflicts!].map((conflict) => [conflict.entityId, conflict])).values()]);
+      }
+      if (deletedGroups.length > 0) setSyncConflicts((current) => current.filter((conflict) => !deletedGroups.some((group) => group.id === conflict.groupId)));
       await refreshPending();
       quotaBackoffUntilRef.current = 0;
       quotaBackoffAttemptRef.current = 0;
@@ -1035,11 +1158,24 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
         clearTimeout(quotaRetryTimerRef.current);
         quotaRetryTimerRef.current = undefined;
       }
-      setAutoSyncPaused(false);
+      setAutoSyncPaused(Boolean(result.conflicts?.length));
       const completedAt = new Date().toISOString();
       setLastSyncAt(completedAt);
-      setSyncMessage("Synced with Google Drive");
+      setGoogleFolderCreationRequired(false);
+      setSyncMessage(deletedGroups.length > 0
+        ? `${deletedGroups.length} Group${deletedGroups.length === 1 ? " was" : "s were"} deleted by the owner and removed from this device`
+        : unavailableGroups.length > 0
+          ? `${unavailableGroups.length} Group${unavailableGroups.length === 1 ? " is" : "s are"} temporarily unavailable; local data and pending changes were kept`
+          : result.conflicts?.length
+            ? `${result.conflicts.length} record conflict${result.conflicts.length === 1 ? "" : "s"} need review in Settings`
+            : "Synced with Google Drive");
     } catch (error) {
+      if (error instanceof GoogleFolderCreationRequiredError) {
+        setGoogleFolderCreationRequired(true);
+        setAutoSyncPaused(true);
+        setSyncMessage("Confirm Google Drive folder creation to continue syncing");
+        return;
+      }
       for (const operation of operations) {
         await updatePendingOperation({ ...operation, status: "failed", attempts: operation.attempts + 1, lastError: error instanceof Error ? error.message : "Sync failed" });
       }
@@ -1049,15 +1185,38 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       syncInFlightRef.current = false;
       setSyncing(false);
     }
-  }, [googleConnected, refreshPending, snapshot]);
+  }, [googleConnected, refreshPending, selectedGroupId, snapshot]);
+
+  const confirmGoogleFolderCreation = useCallback(async () => {
+    setGoogleFolderCreationRequired(false);
+    setAutoSyncPaused(false);
+    await syncNow({ allowGoogleFolderCreation: true });
+  }, [syncNow]);
+
+  const dismissGoogleFolderCreation = useCallback(() => {
+    setGoogleFolderCreationRequired(false);
+    setAutoSyncPaused(true);
+    setSyncMessage("Google Drive folder creation cancelled — changes remain on this device");
+  }, []);
 
   useEffect(() => {
-    if (isOnline && googleConnected && hydrated && pendingCount > 0 && !syncing && !autoSyncPaused) {
+    if (isOnline && googleConnected && hydrated && pendingCount > 0 && !syncing && !autoSyncPaused && !restoreMode) {
       queueMicrotask(() => void syncNow());
     }
-  }, [autoSyncPaused, googleConnected, hydrated, isOnline, pendingCount, syncing, syncNow]);
+  }, [autoSyncPaused, googleConnected, hydrated, isOnline, pendingCount, syncing, syncNow, restoreMode]);
 
-  const resetDemo = useCallback(async () => {
+  useEffect(() => {
+    if (!isOnline || !googleConnected) {
+      initialSharedPullRef.current = false;
+      return;
+    }
+    if (!hydrated || syncing || restoreMode || initialSharedPullRef.current || snapshot.groups.length === 0) return;
+    initialSharedPullRef.current = true;
+    queueMicrotask(() => void syncNow());
+  }, [googleConnected, hydrated, isOnline, restoreMode, snapshot.groups.length, syncNow, syncing]);
+
+  const resetPhoneData = useCallback(async () => {
+    if (syncInFlightRef.current) throw new Error("Wait for the current sync to finish, then try again.");
     await clearLocalData();
     quotaBackoffUntilRef.current = 0;
     quotaBackoffAttemptRef.current = 0;
@@ -1065,24 +1224,56 @@ export function BillMoshiProvider({ children }: { children: ReactNode }) {
       clearTimeout(quotaRetryTimerRef.current);
       quotaRetryTimerRef.current = undefined;
     }
-    setSnapshot(seedSnapshot);
+    const nextSnapshot = emptySnapshot(snapshot.currentUser);
+    setSnapshot(nextSnapshot);
     setSelectedGroupId(undefined);
     setPersonalContext(false);
     localStorage.removeItem(SELECTED_CONTEXT_KEY);
     setPendingCount(0);
+    setSyncConflicts([]);
     setAutoSyncPaused(false);
-    setSyncMessage("Demo data restored");
-    await saveSnapshot(seedSnapshot);
+    setSyncMessage("Phone data reset");
+    await saveSnapshot(nextSnapshot);
+  }, [snapshot.currentUser]);
+
+  const factoryReset = useCallback(async () => {
+    if (!googleConnected) throw new Error("Connect Google before factory reset.");
+    if (syncInFlightRef.current) throw new Error("Wait for the current sync to finish, then try again.");
+    setSyncing(true);
+    try {
+      const response = await fetch("/api/factory-reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmation: "factory reset" }) });
+      const result = await response.json() as { error?: string; trashedRoots?: number };
+      if (!response.ok) throw new Error(result.error ?? "Could not reset Google Drive storage.");
+      await resetPhoneData();
+      setSyncMessage(result.trashedRoots ? "Factory reset complete — Google Drive storage moved to Trash" : "Factory reset complete — no Bill Moshi Drive storage was found");
+    } finally { setSyncing(false); }
+  }, [googleConnected, resetPhoneData]);
+
+  const restoreMockRecords = useCallback(async () => {
+    if (syncInFlightRef.current) throw new Error("Wait for the current sync to finish, then try again.");
+    await clearLocalData();
+    const mockSnapshot = structuredClone(seedSnapshot);
+    setSnapshot(mockSnapshot);
+    setSelectedGroupId(mockSnapshot.groups[0]?.id);
+    setPersonalContext(false);
+    localStorage.setItem(SELECTED_CONTEXT_KEY, mockSnapshot.groups[0]?.id ?? "");
+    setPendingCount(0);
+    setSyncConflicts([]);
+    setAutoSyncPaused(false);
+    setSyncMessage("Mock records restored");
+    await saveSnapshot(mockSnapshot);
   }, []);
 
   const value = useMemo<AppContextValue>(() => ({
-    snapshot, selectedGroupId, personalContext, hydrated, isOnline, googleConnected, pendingCount, syncing, syncMessage, lastSyncAt,
+    setRestoreMode, restoreGoogleBackup,
+    saveRecurringPayment, changeRecurringPayment, recurringError,
+    snapshot, selectedGroupId, personalContext, hydrated, isOnline, googleConnected, pendingCount, syncing, syncMessage, syncConflicts, googleFolderCreationRequired, lastSyncAt,
     selectGroup, selectPersonal, updateDefaultCurrency,
-    createGroup, updateGroupCurrency, updateGroupNotes, leaveGroup, deleteGroup, createEvent, updateEvent, deleteEvent, addExpense, updateExpense, setExpenseReportingRate, deleteExpense, addDebtRecords, updateDebtRecord, updateDebtRecordStatus, addCategory, recordSettlement, createInvitation,
-    revokeInvitation, requestJoin, reviewJoinRequest, syncNow, resetDemo,
-  }), [snapshot, selectedGroupId, personalContext, hydrated, isOnline, googleConnected, pendingCount, syncing, syncMessage, lastSyncAt, selectGroup, selectPersonal, updateDefaultCurrency, createGroup, updateGroupCurrency, updateGroupNotes, leaveGroup, deleteGroup, createEvent, updateEvent, deleteEvent, addExpense, updateExpense, setExpenseReportingRate, deleteExpense, addDebtRecords, updateDebtRecord, updateDebtRecordStatus, addCategory, recordSettlement, createInvitation, revokeInvitation, requestJoin, reviewJoinRequest, syncNow, resetDemo]);
+    createGroup, updateGroupCurrency, updateGroupNotes, leaveGroup, deleteGroup, createEvent, updateEvent, deleteEvent, addRecord, updateRecord, setRecordReportingRate, deleteRecord, addDebtRecords, updateDebtRecord, updateDebtRecordStatus, addCategory, recordSettlement, createInvitation,
+    revokeInvitation, resolveInvitation, requestJoin, refreshJoinRequests, reviewJoinRequest, syncNow, confirmGoogleFolderCreation, dismissGoogleFolderCreation, resolveSyncConflict, dismissGroupDeletionNotice, resetPhoneData, factoryReset, restoreMockRecords,
+  }), [setRestoreMode, restoreGoogleBackup, saveRecurringPayment, changeRecurringPayment, recurringError, snapshot, selectedGroupId, personalContext, hydrated, isOnline, googleConnected, pendingCount, syncing, syncMessage, syncConflicts, googleFolderCreationRequired, lastSyncAt, selectGroup, selectPersonal, dismissGroupDeletionNotice, updateDefaultCurrency, createGroup, updateGroupCurrency, updateGroupNotes, leaveGroup, deleteGroup, createEvent, updateEvent, deleteEvent, addRecord, updateRecord, setRecordReportingRate, deleteRecord, addDebtRecords, updateDebtRecord, updateDebtRecordStatus, addCategory, recordSettlement, createInvitation, revokeInvitation, resolveInvitation, requestJoin, refreshJoinRequests, reviewJoinRequest, syncNow, confirmGoogleFolderCreation, dismissGoogleFolderCreation, resolveSyncConflict, resetPhoneData, factoryReset, restoreMockRecords]);
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return <AppContext.Provider value={value}>{hydrated ? children : <main className="grid min-h-dvh place-items-center bg-white p-6"><p role="status" className="max-w-sm text-center text-sm font-semibold text-muted">{startupMessage}</p></main>}</AppContext.Provider>;
 }
 
 export function useBillMoshi() {

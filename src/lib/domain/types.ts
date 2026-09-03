@@ -82,8 +82,8 @@ export interface Category {
   createdBy?: string;
 }
 
-export interface ExpenseSplit {
-  expenseId: string;
+export interface RecordSplit {
+  recordId: string;
   memberId: string;
   splitMethod: SplitMethod;
   owedAmount: number;
@@ -91,8 +91,10 @@ export interface ExpenseSplit {
   shares?: number;
 }
 
-export interface Expense {
+export interface LedgerRecord {
   id: string;
+  recurringPaymentId?: string;
+  recurringPaymentDate?: string;
   recordType: RecordType;
   groupId?: string;
   eventId?: string;
@@ -123,13 +125,45 @@ export interface Expense {
   updatedAt: string;
   version: number;
   syncStatus: SyncStatus;
-  splits: ExpenseSplit[];
+  splits: RecordSplit[];
+}
+
+export interface RecordSyncConflict {
+  entityId: string;
+  groupId: string;
+  localAction: "upsert" | "delete";
+  localVersion: number;
+  remoteVersion: number;
+  reason: "remote-changed" | "remote-deleted" | "owner-required";
+  remoteRecord?: LedgerRecord;
 }
 
 export interface SettlementEvent {
   eventId: string;
   allocatedAmount: number;
 }
+
+export interface RecurringPayment {
+  id: string;
+  version: number;
+  name: string;
+  categoryId: string;
+  amount: number;
+  currency: CurrencyCode;
+  startDate: string;
+  frequency: "day" | "week" | "month" | "year";
+  interval: number;
+  endDate?: string;
+  nextOccurrence: number;
+  status: "active" | "paused" | "deleted";
+  note?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: SyncStatus;
+}
+
+export type RecurringPaymentInput = Pick<RecurringPayment, "name" | "categoryId" | "amount" | "currency" | "startDate" | "frequency" | "interval" | "endDate" | "note">;
 
 export interface Settlement {
   id: string;
@@ -197,6 +231,16 @@ export interface JoinRequest {
   assignedRole?: Exclude<MemberRole, "owner">;
 }
 
+export interface GroupInvitationPreview {
+  invitationId: string;
+  group: Pick<Group, "id" | "name" | "emoji" | "description" | "currency" | "ownerId" | "createdAt" | "updatedAt">;
+  ownerName: string;
+  approvalRequired: boolean;
+  defaultRole: Exclude<MemberRole, "owner">;
+  expiresAt?: string;
+  requestStatus?: InvitationStatus;
+}
+
 export interface ActivityEntry {
   id: string;
   groupId?: string;
@@ -205,7 +249,7 @@ export interface ActivityEntry {
   type:
     | "group_created"
     | "event_created"
-    | "expense_created"
+    | "record_created"
     | "settlement_recorded"
     | "invitation_created"
     | "invitation_revoked"
@@ -217,6 +261,12 @@ export interface ActivityEntry {
   createdAt: string;
 }
 
+export interface GroupDeletionNotice {
+  groupId: string;
+  groupName: string;
+  detectedAt: string;
+}
+
 export interface AppSnapshot {
   currentUser: User;
   groups: Group[];
@@ -224,17 +274,19 @@ export interface AppSnapshot {
   events: BillEvent[];
   members: EventMember[];
   categories: Category[];
-  expenses: Expense[];
+  records: LedgerRecord[];
+  recurringPayments: RecurringPayment[];
   debtRecords: DebtRecord[];
   settlements: Settlement[];
   invitations: GroupInvitation[];
   joinRequests: JoinRequest[];
   activity: ActivityEntry[];
+  groupDeletionNotices: GroupDeletionNotice[];
 }
 
 export interface PendingOperation {
   id: string;
-  entityType: "user_settings" | "group" | "group_member" | "event" | "expense" | "debt_record" | "settlement" | "category" | "invitation" | "join_request";
+  entityType: "user_settings" | "group" | "group_member" | "event" | "record" | "recurring_payment" | "debt_record" | "settlement" | "category" | "invitation" | "join_request";
   entityId: string;
   action: "upsert" | "delete";
   payload: unknown;
